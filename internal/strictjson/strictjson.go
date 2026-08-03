@@ -29,8 +29,16 @@ func Read(r io.Reader, limit int64) ([]byte, error) {
 
 // Parse returns maps, slices, strings, bools, nil, and json.Number values.
 func Parse(data []byte) (any, error) {
-	if len(data) > MaxInputBytes {
-		return nil, fmt.Errorf("JSON input exceeds %d bytes", MaxInputBytes)
+	return ParseBounded(data, MaxInputBytes)
+}
+
+// ParseBounded applies a caller-supplied byte bound and the package depth bound.
+func ParseBounded(data []byte, maxBytes int) (any, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("JSON byte limit must be positive")
+	}
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("JSON input exceeds %d bytes", maxBytes)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

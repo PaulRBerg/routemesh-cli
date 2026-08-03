@@ -191,6 +191,12 @@ func idKey(id any) (string, error) {
 	}
 }
 
+func EqualID(left, right any) bool {
+	leftKey, leftErr := idKey(left)
+	rightKey, rightErr := idKey(right)
+	return leftErr == nil && rightErr == nil && leftKey == rightKey
+}
+
 func (e Envelope) Value() any {
 	requests := make([]any, len(e.Requests))
 	for i, request := range e.Requests {
