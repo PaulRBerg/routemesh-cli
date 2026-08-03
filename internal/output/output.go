@@ -41,14 +41,8 @@ func Write(writer io.Writer, config Config, document Document) error {
 }
 
 func Encode(config Config, document Document) ([]byte, error) {
-	if config.MaxBytes <= 0 {
-		return nil, fmt.Errorf("max output bytes must be positive")
-	}
-	if config.Format != "json" && config.Format != "ndjson" {
-		return nil, fmt.Errorf("output must be json or ndjson")
-	}
-	if config.Pretty && config.Format == "ndjson" {
-		return nil, fmt.Errorf("--pretty cannot be used with NDJSON output")
+	if err := Validate(config); err != nil {
+		return nil, err
 	}
 
 	var buffer bytes.Buffer
@@ -94,6 +88,32 @@ func Encode(config Config, document Document) ([]byte, error) {
 		return nil, fmt.Errorf("encoded output is %d bytes, exceeding limit %d", buffer.Len(), config.MaxBytes)
 	}
 	return buffer.Bytes(), nil
+}
+
+func Validate(config Config) error {
+	if config.MaxBytes <= 0 {
+		return fmt.Errorf("max output bytes must be positive")
+	}
+	if config.Format != "json" && config.Format != "ndjson" {
+		return fmt.Errorf("output must be json or ndjson")
+	}
+	if config.Pretty && config.Format == "ndjson" {
+		return fmt.Errorf("--pretty cannot be used with NDJSON output")
+	}
+	for _, pointer := range config.Pointers {
+		if pointer == "" {
+			continue
+		}
+		if !strings.HasPrefix(pointer, "/") {
+			return fmt.Errorf("JSON Pointer %q must be empty or start with /", pointer)
+		}
+		for _, token := range strings.Split(pointer[1:], "/") {
+			if _, err := decodeToken(token); err != nil {
+				return fmt.Errorf("invalid JSON Pointer %q: %w", pointer, err)
+			}
+		}
+	}
+	return nil
 }
 
 func applyPointers(value any, pointers []string) (any, error) {

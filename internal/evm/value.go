@@ -76,7 +76,7 @@ func validateFixedHex(raw string, bytes int, label string) error {
 		return fmt.Errorf("%s must be a full %d-byte 0x-prefixed value", label, bytes)
 	}
 	for _, char := range raw[2:] {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
 			return fmt.Errorf("%s must be hexadecimal", label)
 		}
 	}
