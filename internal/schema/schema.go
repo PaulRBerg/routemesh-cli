@@ -2,11 +2,14 @@
 package schema
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 //go:embed catalog.json
@@ -117,7 +120,7 @@ func Detail(parts ...string) (map[string]any, error) {
 		"$id":                          "https://github.com/PaulRBerg/routemesh-cli/schema/" + name,
 		"title":                        "routemesh " + strings.ReplaceAll(name, "-", " ") + " contract",
 		"description":                  item.Summary,
-		"oneOf":                        []any{map[string]any{"$ref": "#/$defs/output"}, map[string]any{"$ref": "#/$defs/dry_run"}},
+		"anyOf":                        []any{map[string]any{"$ref": "#/$defs/output"}, map[string]any{"$ref": "#/$defs/dry_run"}},
 		"$defs":                        defs,
 		"x-routemesh-command":          strings.ReplaceAll(name, "-", " "),
 		"x-routemesh-side-effect":      item.SideEffect,
@@ -129,6 +132,47 @@ func Detail(parts ...string) (map[string]any, error) {
 		"x-routemesh-dry-run-schema":   "#/$defs/dry_run",
 		"x-routemesh-exit-code-schema": "#/$defs/exit_codes",
 	}, nil
+}
+
+func ValidateDefinition(commandName, definition string, value any) error {
+	detail, err := Detail(strings.Split(commandName, "-")...)
+	if err != nil {
+		return err
+	}
+	if definition != "input" && definition != "output" && definition != "stderr_event" && definition != "dry_run" && definition != "exit_codes" {
+		return fmt.Errorf("unknown schema definition %q", definition)
+	}
+	delete(detail, "anyOf")
+	detail["$ref"] = "#/$defs/" + definition
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode %s schema: %w", commandName, err)
+	}
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+	if err != nil {
+		return fmt.Errorf("parse %s schema: %w", commandName, err)
+	}
+	resource := "https://routemesh-cli.invalid/schema/" + commandName + "/" + definition
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource(resource, document); err != nil {
+		return fmt.Errorf("load %s schema: %w", commandName, err)
+	}
+	compiled, err := compiler.Compile(resource)
+	if err != nil {
+		return fmt.Errorf("compile %s schema: %w", commandName, err)
+	}
+	valueJSON, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s %s value: %w", commandName, definition, err)
+	}
+	var normalized any
+	if err := json.Unmarshal(valueJSON, &normalized); err != nil {
+		return fmt.Errorf("normalize %s %s value: %w", commandName, definition, err)
+	}
+	if err := compiled.Validate(normalized); err != nil {
+		return fmt.Errorf("%s %s does not match its bundled schema: %w", commandName, definition, err)
+	}
+	return nil
 }
 
 func EmbeddedCatalog() []byte {

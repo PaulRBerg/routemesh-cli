@@ -77,3 +77,32 @@ func TestCollectLogsRejectsUpperBoundReorg(t *testing.T) {
 	assert.Equal(t, failure.Evidence, typed.ExitCode)
 	assert.Equal(t, "reorg_detected", typed.Kind)
 }
+
+func TestCollectLogsValidatesAndOrdersLogEntries(t *testing.T) {
+	t.Parallel()
+
+	filter, err := ParseLogFilter([]byte(`{"fromBlock":"0x1","toBlock":"0x1"}`))
+	require.NoError(t, err)
+	log := map[string]any{
+		"address":          address,
+		"topics":           []any{topic},
+		"data":             "0x1234",
+		"blockNumber":      "0x1",
+		"transactionHash":  transactionHash,
+		"transactionIndex": "0x0",
+		"blockHash":        blockHashA,
+		"logIndex":         "0x0",
+		"removed":          false,
+	}
+	caller := &callerStub{t: t, results: []callResult{
+		{method: "eth_getBlockByNumber", value: header("0x1", blockHashA)},
+		{method: "eth_getLogs", value: []any{log}},
+		{method: "eth_getBlockByNumber", value: header("0x1", blockHashA)},
+	}}
+	result, err := CollectLogs(context.Background(), caller, "1", filter)
+	require.NoError(t, err)
+	require.Len(t, result.Logs, 1)
+	records := result.Records()
+	require.Len(t, records, 4)
+	assert.Equal(t, "log", records[1].(map[string]any)["type"])
+}

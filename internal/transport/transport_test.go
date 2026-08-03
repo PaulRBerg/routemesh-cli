@@ -31,6 +31,12 @@ func response(status int, body string, headers map[string]string) *http.Response
 	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body))}
 }
 
+type responseSpec struct {
+	status  int
+	body    string
+	headers map[string]string
+}
+
 func generated(t *testing.T, method string) jsonrpc.Envelope {
 	t.Helper()
 	envelope, err := jsonrpc.Generated(method, []any{})
@@ -70,9 +76,9 @@ func TestDoRPCUsesCredentialOnlyInTransportAndRedactsDiagnostics(t *testing.T) {
 func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 	t.Parallel()
 
-	responses := []*http.Response{
-		response(http.StatusTooManyRequests, `{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"cooldown"}}`, map[string]string{"X-Batch-Id": "first", "Retry-After": "1"}),
-		response(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, map[string]string{"X-Batch-Id": "second"}),
+	responses := []responseSpec{
+		{status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"cooldown"}}`, headers: map[string]string{"X-Batch-Id": "first", "Retry-After": "1"}},
+		{status: http.StatusOK, body: `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, headers: map[string]string{"X-Batch-Id": "second"}},
 	}
 	calls := 0
 	var slept []time.Duration
@@ -82,7 +88,7 @@ func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
 			item := responses[calls]
 			calls++
-			return item, nil
+			return response(item.status, item.body, item.headers), nil
 		}),
 		Sleep: func(_ context.Context, delay time.Duration) error {
 			slept = append(slept, delay)
@@ -95,6 +101,32 @@ func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 	assert.Equal(t, 2, result.Attempts)
 	assert.Equal(t, []time.Duration{time.Second}, slept)
 	assert.Len(t, events, 2)
+}
+
+func TestDoRPCHonorsZeroRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	responses := []responseSpec{
+		{status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"cooldown"}}`, headers: map[string]string{"Retry-After": "0"}},
+		{status: http.StatusOK, body: `{"jsonrpc":"2.0","id":1,"result":"0x1"}`},
+	}
+	calls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			item := responses[calls]
+			calls++
+			return response(item.status, item.body, item.headers), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+	})
+	_, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	require.NoError(t, err)
+	assert.Equal(t, []time.Duration{0}, slept)
 }
 
 func TestDoRPCNeverRetriesAllowedWrites(t *testing.T) {
@@ -140,6 +172,59 @@ func TestDoRPCDoesNotRetryPartialBatch(t *testing.T) {
 	assert.Equal(t, 1, calls)
 }
 
+func TestDoRPCRetriesBatchOnlyWhenEveryItemIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	envelope, err := jsonrpc.Batch(
+		jsonrpc.Request{JSONRPC: "2.0", Method: "eth_chainId", Params: []any{}, ID: json.Number("1")},
+		jsonrpc.Request{JSONRPC: "2.0", Method: "eth_blockNumber", Params: []any{}, ID: json.Number("2")},
+	)
+	require.NoError(t, err)
+	bodies := []string{
+		`[{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal"}},{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"server"}}]`,
+		`[{"jsonrpc":"2.0","id":1,"result":"0x1"},{"jsonrpc":"2.0","id":2,"result":"0x2"}]`,
+	}
+	calls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			body := bodies[calls]
+			calls++
+			return response(http.StatusOK, body, nil), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+	})
+	result, err := client.DoRPC(context.Background(), "1", envelope)
+	require.NoError(t, err)
+	assert.False(t, result.HasError)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, []time.Duration{250 * time.Millisecond}, slept)
+}
+
+func TestDoRPCCancellationDuringBackoffIsTransportFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"server"}}`, nil), nil
+		}),
+		Sleep: func(context.Context, time.Duration) error {
+			cancel()
+			return ctx.Err()
+		},
+	})
+	_, err := client.DoRPC(ctx, "1", generated(t, "eth_chainId"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Transport, typed.ExitCode)
+}
+
 func TestDoRPCClassifiesContradictoryAndTransportFailures(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +256,36 @@ func TestDoRPCClassifiesContradictoryAndTransportFailures(t *testing.T) {
 		require.ErrorAs(t, err, &typed)
 		assert.Equal(t, failure.Transport, typed.ExitCode)
 	})
+}
+
+func TestDoRPCClassifiesUnauthorizedWithoutTrustingTheBody(t *testing.T) {
+	t.Parallel()
+
+	client := New(Options{
+		APIKey: "sentinel-secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, "not-json", nil), nil
+		}),
+	})
+	_, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Credential, typed.ExitCode)
+	assert.NotContains(t, typed.Error(), "sentinel-secret")
+}
+
+func TestDoRPCRejectsUnsafeChainAtTransportBoundary(t *testing.T) {
+	t.Parallel()
+
+	doer := doerFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("unsafe chain reached HTTP transport")
+		return nil, nil
+	})
+	client := New(Options{APIKey: "secret", HTTPClient: doer})
+	_, err := client.DoRPC(context.Background(), "1/../../.ssh", generated(t, "eth_chainId"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Validation, typed.ExitCode)
 }
 
 func TestGetAPIRejectsMalformedEvidence(t *testing.T) {

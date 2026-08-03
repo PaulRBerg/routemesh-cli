@@ -247,6 +247,8 @@ func IsWriteMethod(method string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(method, "eth_signTypedData") ||
+	return strings.HasPrefix(method, "eth_send") ||
+		strings.HasPrefix(method, "eth_submit") ||
+		strings.HasPrefix(method, "eth_signTypedData") ||
 		strings.HasPrefix(method, "debug_set")
 }

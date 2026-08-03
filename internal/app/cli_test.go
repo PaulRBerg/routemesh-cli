@@ -243,6 +243,43 @@ func TestAuthStatusAndDryRunsNeverExposeOrMutateCredentials(t *testing.T) {
 	assert.NotEmpty(t, initResult.stdout)
 }
 
+func TestInitValidatesTheStoredKeyIgnoringEnvironmentOverride(t *testing.T) {
+	t.Parallel()
+
+	keychain := &keychainStub{available: true, key: "keychain-sentinel"}
+	var requestedURL string
+	doer := &doerStub{do: func(request *http.Request) (*http.Response, error) {
+		requestedURL = request.URL.String()
+		return httpResponse(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, nil), nil
+	}}
+	result := execute(t, []string{"init", "1"}, Dependencies{
+		HTTPClient: doer,
+		Keychain:   keychain,
+		Getenv:     func(string) string { return "environment-sentinel" },
+	})
+	assert.Equal(t, 0, result.code)
+	assert.Equal(t, 1, keychain.adds)
+	assert.Equal(t, 1, keychain.gets)
+	assert.Contains(t, requestedURL, "keychain-sentinel")
+	assert.NotContains(t, requestedURL, "environment-sentinel")
+	assert.NotContains(t, result.stdout+result.stderr, "sentinel")
+}
+
+func TestSchemaAPIFetch(t *testing.T) {
+	t.Parallel()
+
+	doer := &doerStub{do: func(request *http.Request) (*http.Response, error) {
+		assert.Equal(t, "/openapi.json", request.URL.Path)
+		return httpResponse(http.StatusOK, `{"openapi":"3.0.0","paths":{}}`, nil), nil
+	}}
+	result := execute(t, []string{"schema", "api"}, Dependencies{
+		HTTPClient: doer,
+		OpenAPIURL: "https://docs.example.test/openapi.json",
+	})
+	assert.Equal(t, 0, result.code)
+	assert.Equal(t, "3.0.0", decodeObject(t, result.stdout)["openapi"])
+}
+
 func TestHealthAndChainsValidateLiveShapes(t *testing.T) {
 	t.Parallel()
 
@@ -301,4 +338,16 @@ func TestLogsAndReceiptDryRunsAreNetworkFree(t *testing.T) {
 	assert.Equal(t, 0, receipt.code)
 	assert.Equal(t, 0, doer.calls)
 	assert.Len(t, decodeObject(t, receipt.stdout)["requests"], 4)
+}
+
+func TestOutputEnvironmentDefaults(t *testing.T) {
+	t.Setenv("ROUTEMESH_OUTPUT", "ndjson")
+	t.Setenv("ROUTEMESH_MAX_OUTPUT_BYTES", "1048576")
+
+	doer := &doerStub{do: func(*http.Request) (*http.Response, error) {
+		return httpResponse(http.StatusOK, `[{"chain_id":"1","name":"One"},{"chain_id":"10","name":"Ten"}]`, nil), nil
+	}}
+	result := execute(t, []string{"chains"}, Dependencies{HTTPClient: doer})
+	assert.Equal(t, 0, result.code)
+	assert.Len(t, decodeLines(t, result.stdout), 2)
 }

@@ -21,7 +21,7 @@ func (command *SchemaCmd) Run(runtime *Runtime) error {
 		if err != nil {
 			return failure.Wrap(failure.Validation, "schema_error", "load embedded schema index", err)
 		}
-		return runtime.emit(output.Document{JSON: index})
+		return runtime.emitContract("schema", "output", output.Document{JSON: index})
 	}
 	if len(command.Command) == 1 && command.Command[0] == "api" {
 		value, _, err := runtime.publicClient().GetOpenAPI(runtime.ctx)
@@ -38,13 +38,13 @@ func (command *SchemaCmd) Run(runtime *Runtime) error {
 		if _, ok := object["paths"].(map[string]any); !ok {
 			return failure.Evidencef("invalid_openapi", "RouteMesh OpenAPI document has no paths object")
 		}
-		return runtime.emit(output.Document{JSON: value})
+		return runtime.emitContract("schema", "output", output.Document{JSON: value})
 	}
 	detail, err := schema.Detail(command.Command...)
 	if err != nil {
 		return failure.Wrap(failure.Validation, "schema_error", err.Error(), err)
 	}
-	return runtime.emit(output.Document{JSON: detail})
+	return runtime.emitContract("schema", "output", output.Document{JSON: detail})
 }
 
 func (command *InitCmd) Run(runtime *Runtime) error {
@@ -67,7 +67,7 @@ func (command *InitCmd) Run(runtime *Runtime) error {
 				map[string]any{"action": "rpc_probe", "method": "eth_chainId", "destination": transport.RedactedDestination(runtime.rpcBase, command.ChainID)},
 			},
 		}
-		if err := runtime.emit(output.Document{JSON: plan}); err != nil {
+		if err := runtime.emitContract("init", "dry_run", output.Document{JSON: plan}); err != nil {
 			return err
 		}
 		if !available {
@@ -103,7 +103,7 @@ func (command *InitCmd) Run(runtime *Runtime) error {
 	if returned.Cmp(new(big.Int).SetUint64(chainID)) != 0 {
 		return failure.Evidencef("chain_mismatch", "eth_chainId did not match the explicit chain ID")
 	}
-	return runtime.emit(output.Document{JSON: map[string]any{
+	return runtime.emitContract("init", "output", output.Document{JSON: map[string]any{
 		"initialized":   true,
 		"chain_id":      command.ChainID,
 		"active_source": "keychain",
@@ -133,7 +133,7 @@ func (*AuthStatusCmd) Run(runtime *Runtime) error {
 	} else if keychainState == "configured" {
 		activeSource = "keychain"
 	}
-	return runtime.emit(output.Document{JSON: map[string]any{
+	return runtime.emitContract("auth-status", "output", output.Document{JSON: map[string]any{
 		"environment":   environmentState,
 		"keychain":      keychainState,
 		"active_source": activeSource,
@@ -142,7 +142,7 @@ func (*AuthStatusCmd) Run(runtime *Runtime) error {
 
 func (command *AuthClearCmd) Run(runtime *Runtime) error {
 	if command.DryRun {
-		return runtime.emit(output.Document{JSON: map[string]any{
+		return runtime.emitContract("auth-clear", "dry_run", output.Document{JSON: map[string]any{
 			"dry_run":     true,
 			"side_effect": "external_write",
 			"action":      "delete_keychain_item",
@@ -155,7 +155,7 @@ func (command *AuthClearCmd) Run(runtime *Runtime) error {
 	if _, err := runtime.keychain.Delete(runtime.ctx); err != nil {
 		return failure.Wrap(failure.Credential, "keychain_error", "could not clear the RouteMesh Keychain item", err)
 	}
-	return runtime.emit(output.Document{JSON: map[string]any{
+	return runtime.emitContract("auth-clear", "output", output.Document{JSON: map[string]any{
 		"cleared":     true,
 		"environment": "unchanged",
 	}})

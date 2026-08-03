@@ -29,7 +29,6 @@ func TestAllCommandSchemasCompile(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"schema", "init", "auth-status", "auth-clear", "health", "chains", "ping", "rpc", "logs", "receipt"} {
-		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_ = compileDetail(t, name)
@@ -46,10 +45,25 @@ func TestRepresentativeOutputsMatchSchemas(t *testing.T) {
 
 	chains := compileDetail(t, "chains")
 	require.NoError(t, chains.Validate([]any{map[string]any{"chain_id": "1", "name": "Ethereum"}}))
+	require.NoError(t, chains.Validate([]any{map[string]any{"chain_id": "18446744073709551615", "name": "Maximum"}}))
 	require.Error(t, chains.Validate([]any{map[string]any{"chain_id": "01", "name": "Ethereum"}}))
+	require.Error(t, chains.Validate([]any{map[string]any{"chain_id": "18446744073709551616", "name": "Overflow"}}))
 
 	rpc := compileDetail(t, "rpc")
 	require.NoError(t, rpc.Validate(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x1"}))
+}
+
+func TestValidateDefinition(t *testing.T) {
+	t.Parallel()
+
+	valid := map[string]any{"ready": true, "message": "ready", "latency_ms": 1}
+	require.NoError(t, ValidateDefinition("health", "output", valid))
+	require.Error(t, ValidateDefinition("health", "output", map[string]any{"ready": true}))
+	require.Error(t, ValidateDefinition("health", "unknown", valid))
+	require.NoError(t, ValidateDefinition("ping", "output", map[string]any{
+		"chain_id": "1", "block_number": "1", "block_number_hex": "0x1", "latency_ms": int64(1),
+		"routes": []string{"eth_chainId", "eth_blockNumber"},
+	}))
 }
 
 func TestSchemasMarkProviderContentUntrusted(t *testing.T) {

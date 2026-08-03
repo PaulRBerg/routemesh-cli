@@ -15,6 +15,7 @@ import (
 	"github.com/paulrberg/routemesh-cli/internal/auth"
 	"github.com/paulrberg/routemesh-cli/internal/failure"
 	"github.com/paulrberg/routemesh-cli/internal/output"
+	contractschema "github.com/paulrberg/routemesh-cli/internal/schema"
 	"github.com/paulrberg/routemesh-cli/internal/transport"
 )
 
@@ -199,6 +200,13 @@ func (r *Runtime) emit(document output.Document) error {
 		return failure.Wrap(failure.Validation, "output_error", cleanMessage(err.Error()), err)
 	}
 	return nil
+}
+
+func (r *Runtime) emitContract(commandName, definition string, document output.Document) error {
+	if err := contractschema.ValidateDefinition(commandName, definition, document.JSON); err != nil {
+		return failure.Wrap(failure.Validation, "schema_validation", err.Error(), err)
+	}
+	return r.emit(document)
 }
 
 func (r *Runtime) diagnostic(event any) {

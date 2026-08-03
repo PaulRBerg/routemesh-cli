@@ -36,7 +36,7 @@ func (*HealthCmd) Run(runtime *Runtime) error {
 		"message":    message,
 		"latency_ms": latency.Milliseconds(),
 	}}
-	if err := runtime.emit(document); err != nil {
+	if err := runtime.emitContract("health", "output", document); err != nil {
 		return err
 	}
 	if !ready {
@@ -87,7 +87,7 @@ func (*ChainsCmd) Run(runtime *Runtime) error {
 	for i := range chains {
 		values[i] = chains[i].value
 	}
-	return runtime.emit(output.Document{JSON: values, NDJSON: values})
+	return runtime.emitContract("chains", "output", output.Document{JSON: values, NDJSON: values})
 }
 
 func (command *PingCmd) Run(runtime *Runtime) error {
@@ -136,7 +136,7 @@ func (command *PingCmd) Run(runtime *Runtime) error {
 	if err != nil {
 		return failure.Wrap(failure.Evidence, "invalid_block_number", "eth_blockNumber returned a malformed quantity", err)
 	}
-	return runtime.emit(output.Document{JSON: map[string]any{
+	return runtime.emitContract("ping", "output", output.Document{JSON: map[string]any{
 		"chain_id":         command.ChainID,
 		"block_number":     block.String(),
 		"block_number_hex": blockHex,
@@ -161,7 +161,7 @@ func (command *RPCCmd) Run(runtime *Runtime) error {
 		if envelope.HasWrite() {
 			sideEffect = "external_write"
 		}
-		return runtime.emit(output.Document{JSON: map[string]any{
+		return runtime.emitContract("rpc", "dry_run", output.Document{JSON: map[string]any{
 			"dry_run":     true,
 			"chain_id":    command.ChainID,
 			"destination": transport.RedactedDestination(runtime.rpcBase, command.ChainID),
@@ -185,7 +185,7 @@ func (command *RPCCmd) Run(runtime *Runtime) error {
 	if result.Batch {
 		document.NDJSON, _ = result.Value.([]any)
 	}
-	if err := runtime.emit(document); err != nil {
+	if err := runtime.emitContract("rpc", "output", document); err != nil {
 		return err
 	}
 	if result.HasError {

@@ -53,7 +53,7 @@ func (command *LogsCmd) Run(runtime *Runtime) error {
 			chunks = values
 			runtimeResolution = nil
 		}
-		return runtime.emit(output.Document{JSON: map[string]any{
+		return runtime.emitContract("logs", "dry_run", output.Document{JSON: map[string]any{
 			"dry_run":            true,
 			"chain_id":           command.ChainID,
 			"destination":        transport.RedactedDestination(runtime.rpcBase, command.ChainID),
@@ -71,7 +71,7 @@ func (command *LogsCmd) Run(runtime *Runtime) error {
 	if err != nil {
 		return err
 	}
-	return runtime.emit(output.Document{JSON: result.Value(), NDJSON: result.Records()})
+	return runtime.emitContract("logs", "output", output.Document{JSON: result.Value(), NDJSON: result.Records()})
 }
 
 func (command *ReceiptCmd) Run(runtime *Runtime) error {
@@ -82,7 +82,7 @@ func (command *ReceiptCmd) Run(runtime *Runtime) error {
 		return failure.Wrap(failure.Validation, "invalid_transaction_hash", err.Error(), err)
 	}
 	if command.DryRun {
-		return runtime.emit(output.Document{JSON: map[string]any{
+		return runtime.emitContract("receipt", "dry_run", output.Document{JSON: map[string]any{
 			"dry_run":          true,
 			"chain_id":         command.ChainID,
 			"transaction_hash": command.TxHash,
@@ -103,7 +103,7 @@ func (command *ReceiptCmd) Run(runtime *Runtime) error {
 	if err != nil {
 		return err
 	}
-	return runtime.emit(output.Document{JSON: result.Value()})
+	return runtime.emitContract("receipt", "output", output.Document{JSON: result.Value()})
 }
 
 func maxOutputPlanError(chunks uint64, limit int64) error {

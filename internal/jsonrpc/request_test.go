@@ -57,12 +57,21 @@ func TestBatchLimit(t *testing.T) {
 func TestWriteClassification(t *testing.T) {
 	t.Parallel()
 
-	for _, method := range []string{"eth_sendRawTransaction", "personal_sign", "engine_newPayloadV3", "anvil_setBalance", "eth_newFilter"} {
+	for _, method := range []string{"eth_sendRawTransaction", "eth_sendUserOperation", "eth_submitWork", "personal_sign", "engine_newPayloadV3", "anvil_setBalance", "eth_newFilter"} {
 		assert.True(t, IsWriteMethod(method), method)
 	}
 	for _, method := range []string{"eth_call", "eth_getLogs", "eth_getFilterChanges", "debug_traceTransaction"} {
 		assert.False(t, IsWriteMethod(method), method)
 	}
+}
+
+func TestOpaqueParamsPermitApplicationControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	envelope, err := ParseRaw([]byte("{\"jsonrpc\":\"2.0\",\"method\":\"eth_call\",\"params\":[\"line\\n\\u001b\"],\"id\":1}"))
+	require.NoError(t, err)
+	params := envelope.Requests[0].Params.([]any)
+	assert.Equal(t, "line\n\x1b", params[0])
 }
 
 func FuzzParseRaw(f *testing.F) {

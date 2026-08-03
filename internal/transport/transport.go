@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulrberg/routemesh-cli/internal/evm"
 	"github.com/paulrberg/routemesh-cli/internal/failure"
 	"github.com/paulrberg/routemesh-cli/internal/jsonrpc"
 	"github.com/paulrberg/routemesh-cli/internal/strictjson"
@@ -134,6 +135,9 @@ func (c *Client) getJSON(ctx context.Context, destination string) (any, time.Dur
 }
 
 func (c *Client) DoRPC(ctx context.Context, chainID string, envelope jsonrpc.Envelope) (RPCResult, error) {
+	if _, err := evm.ParseChainID(chainID); err != nil {
+		return RPCResult{}, failure.Wrap(failure.Validation, "invalid_chain_id", err.Error(), err)
+	}
 	if c.apiKey == "" {
 		return RPCResult{}, failure.New(failure.Credential, "credential_missing", "no RouteMesh API key is configured")
 	}
@@ -199,6 +203,9 @@ func (c *Client) rpcAttempt(
 	value, parseErr := strictjson.ParseBounded(responseBody, MaxResponseBytes)
 	if parseErr != nil {
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			if response.StatusCode == http.StatusUnauthorized {
+				return RPCResult{}, "", failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
+			}
 			return RPCResult{}, "", failure.New(failure.Transport, "http_error", fmt.Sprintf("RouteMesh returned HTTP %d with no valid JSON-RPC response", response.StatusCode))
 		}
 		return RPCResult{}, "", failure.Wrap(failure.Evidence, "invalid_rpc_response", "RouteMesh returned invalid JSON-RPC evidence", parseErr)
@@ -275,8 +282,8 @@ func retryDelay(codes []int64, hasError bool, retryAfter string, now time.Time) 
 	for _, code := range codes {
 		switch code {
 		case -32003:
-			candidate := parseRetryAfter(retryAfter, now)
-			if candidate <= 0 || candidate > 30*time.Second {
+			candidate, valid := parseRetryAfter(retryAfter, now)
+			if !valid || candidate > 30*time.Second {
 				candidate = 2 * time.Second
 			}
 			if candidate > delay {
@@ -293,15 +300,19 @@ func retryDelay(codes []int64, hasError bool, retryAfter string, now time.Time) 
 	return delay, true
 }
 
-func parseRetryAfter(raw string, now time.Time) time.Duration {
+func parseRetryAfter(raw string, now time.Time) (time.Duration, bool) {
 	if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second
+		return time.Duration(seconds) * time.Second, true
 	}
 	when, err := http.ParseTime(raw)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return when.Sub(now)
+	delay := when.Sub(now)
+	if delay < 0 {
+		return 0, false
+	}
+	return delay, true
 }
 
 func transportFailure(ctx context.Context, _ error) *failure.Error {
