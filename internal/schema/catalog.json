@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "common": {
+    "stderr_event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "error" },
+            "code": { "type": "string" },
+            "message": { "type": "string" },
+            "exit_code": { "type": "integer", "enum": [2, 3, 4, 5, 6] },
+            "details": {}
+          },
+          "required": ["type", "code", "message", "exit_code"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "request_attempt" },
+            "attempt": { "type": "integer", "minimum": 1, "maximum": 2 },
+            "destination": { "type": "string", "pattern": "/<redacted>$" },
+            "batch_id": { "type": ["string", "null"] },
+            "http_status": { "type": "integer", "minimum": 100, "maximum": 599 }
+          },
+          "required": ["type", "attempt", "destination", "batch_id", "http_status"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "exit_codes": {
+      "type": "object",
+      "const": {
+        "success": 0,
+        "validation": 2,
+        "credential": 3,
+        "transport": 4,
+        "provider": 5,
+        "evidence": 6
+      }
+    },
+    "chain_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "Canonical positive decimal uint64 chain ID."
+    },
+    "tx_hash": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "opaque": {
+      "description": "Method-dependent opaque JSON returned by a provider.",
+      "x-routemesh-untrusted": true
+    }
+  },
+  "commands": {
+    "schema": {
+      "summary": "Inspect CLI contracts or fetch RouteMesh's official OpenAPI document.",
+      "side_effect": "read_only",
+      "input_modes": ["arguments"],
+      "input": {
+        "type": "object",
+        "properties": { "command": { "type": "array", "items": { "type": "string" } } },
+        "required": ["command"],
+        "additionalProperties": false
+      },
+      "output": { "type": "object" },
+      "dry_run": { "not": {} }
+    },
+    "init": {
+      "summary": "Store a RouteMesh API key in macOS Keychain and validate its chain route.",
+      "side_effect": "external_write",
+      "input_modes": ["arguments", "keychain_prompt"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "dry_run": { "type": "boolean" }
+        },
+        "required": ["chain_id", "dry_run"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "initialized": { "const": true },
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "active_source": { "const": "keychain" }
+        },
+        "required": ["initialized", "chain_id", "active_source"],
+        "additionalProperties": false
+      },
+      "dry_run": {
+        "type": "object",
+        "properties": {
+          "dry_run": { "const": true },
+          "side_effect": { "const": "external_write" },
+          "platform": { "type": "string" },
+          "security_tool": { "type": "string" },
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "steps": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["dry_run", "side_effect", "platform", "security_tool", "chain_id", "steps"],
+        "additionalProperties": false
+      }
+    },
+    "auth-status": {
+      "summary": "Report environment and Keychain credential state without exposing credentials.",
+      "side_effect": "read_only",
+      "input_modes": ["none"],
+      "input": { "type": "object", "maxProperties": 0 },
+      "output": {
+        "type": "object",
+        "properties": {
+          "environment": { "enum": ["configured", "not_configured"] },
+          "keychain": { "enum": ["configured", "not_configured", "unavailable", "error"] },
+          "active_source": { "enum": ["environment", "keychain", "none"] }
+        },
+        "required": ["environment", "keychain", "active_source"],
+        "additionalProperties": false
+      },
+      "dry_run": { "not": {} }
+    },
+    "auth-clear": {
+      "summary": "Idempotently remove only the RouteMesh macOS Keychain item.",
+      "side_effect": "external_write",
+      "input_modes": ["arguments"],
+      "input": {
+        "type": "object",
+        "properties": { "dry_run": { "type": "boolean" } },
+        "required": ["dry_run"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "cleared": { "type": "boolean" },
+          "environment": { "const": "unchanged" }
+        },
+        "required": ["cleared", "environment"],
+        "additionalProperties": false
+      },
+      "dry_run": {
+        "type": "object",
+        "properties": {
+          "dry_run": { "const": true },
+          "side_effect": { "const": "external_write" },
+          "action": { "const": "delete_keychain_item" },
+          "environment": { "const": "unchanged" }
+        },
+        "required": ["dry_run", "side_effect", "action", "environment"],
+        "additionalProperties": false
+      }
+    },
+    "health": {
+      "summary": "Check RouteMesh service readiness and latency.",
+      "side_effect": "read_only",
+      "input_modes": ["none"],
+      "input": { "type": "object", "maxProperties": 0 },
+      "output": {
+        "type": "object",
+        "properties": {
+          "ready": { "type": "boolean" },
+          "message": { "type": "string", "x-routemesh-untrusted": true },
+          "latency_ms": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["ready", "message", "latency_ms"],
+        "additionalProperties": false
+      },
+      "dry_run": { "not": {} }
+    },
+    "chains": {
+      "summary": "List RouteMesh's live supported-chain catalog sorted by numeric chain ID.",
+      "side_effect": "read_only",
+      "input_modes": ["none"],
+      "input": { "type": "object", "maxProperties": 0 },
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "chain_id": { "$ref": "#/$defs/chain_id" },
+            "name": { "type": "string", "x-routemesh-untrusted": true }
+          },
+          "required": ["chain_id", "name"],
+          "additionalProperties": false
+        }
+      },
+      "dry_run": { "not": {} }
+    },
+    "ping": {
+      "summary": "Verify eth_chainId and eth_blockNumber for one explicit EVM chain.",
+      "side_effect": "read_only",
+      "input_modes": ["arguments"],
+      "input": {
+        "type": "object",
+        "properties": { "chain_id": { "$ref": "#/$defs/chain_id" } },
+        "required": ["chain_id"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "block_number": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+          "block_number_hex": { "type": "string", "pattern": "^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$" },
+          "latency_ms": { "type": "integer", "minimum": 0 },
+          "routes": { "const": ["eth_chainId", "eth_blockNumber"] }
+        },
+        "required": ["chain_id", "block_number", "block_number_hex", "latency_ms", "routes"],
+        "additionalProperties": false
+      },
+      "dry_run": { "not": {} }
+    },
+    "rpc": {
+      "summary": "Send one strict JSON-RPC request or a non-empty batch.",
+      "side_effect": "conditional",
+      "input_modes": ["arguments", "raw_json", "stdin"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "request": {
+            "oneOf": [
+              { "$ref": "#/$defs/jsonrpc_request" },
+              { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/jsonrpc_request" } }
+            ]
+          },
+          "allow_write": { "type": "boolean" },
+          "dry_run": { "type": "boolean" }
+        },
+        "required": ["chain_id", "request", "allow_write", "dry_run"],
+        "additionalProperties": false
+      },
+      "output": { "$ref": "#/$defs/opaque" },
+      "dry_run": {
+        "type": "object",
+        "properties": {
+          "dry_run": { "const": true },
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "destination": { "type": "string", "pattern": "/<redacted>$" },
+          "side_effect": { "enum": ["read_only", "external_write"] },
+          "request": {},
+          "retry": { "type": "object" }
+        },
+        "required": ["dry_run", "chain_id", "destination", "side_effect", "request", "retry"],
+        "additionalProperties": false
+      }
+    },
+    "logs": {
+      "summary": "Collect canonical eth_getLogs evidence in deterministic 10,000-block chunks.",
+      "side_effect": "read_only",
+      "input_modes": ["raw_json", "stdin"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "filter": { "type": "object" },
+          "dry_run": { "type": "boolean" }
+        },
+        "required": ["chain_id", "filter", "dry_run"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "from_block": { "type": "string" },
+          "to_block": { "type": "string" },
+          "upper_bound_hash": { "$ref": "#/$defs/tx_hash" },
+          "chunks": { "type": "integer", "minimum": 1 },
+          "checkpoints": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "object", "x-routemesh-untrusted": true } },
+          "logs": { "type": "array", "items": { "$ref": "#/$defs/opaque" } }
+        },
+        "required": ["chain_id", "from_block", "to_block", "upper_bound_hash", "chunks", "checkpoints", "logs"],
+        "additionalProperties": false
+      },
+      "dry_run": {
+        "type": "object",
+        "properties": {
+          "dry_run": { "const": true },
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "destination": { "type": "string", "pattern": "/<redacted>$" },
+          "filter": { "type": "object" },
+          "chunk_size": { "const": 10000 },
+          "chunks": { "type": ["array", "null"] },
+          "runtime_resolution": { "type": ["object", "null"] }
+        },
+        "required": ["dry_run", "chain_id", "destination", "filter", "chunk_size", "chunks", "runtime_resolution"],
+        "additionalProperties": false
+      }
+    },
+    "receipt": {
+      "summary": "Verify a transaction receipt against its transaction and exact block header.",
+      "side_effect": "read_only",
+      "input_modes": ["arguments"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "transaction_hash": { "$ref": "#/$defs/tx_hash" },
+          "dry_run": { "type": "boolean" }
+        },
+        "required": ["chain_id", "transaction_hash", "dry_run"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "transaction_hash": { "$ref": "#/$defs/tx_hash" },
+          "source": { "enum": ["direct", "block_receipts"] },
+          "transaction": { "$ref": "#/$defs/opaque" },
+          "receipt": { "$ref": "#/$defs/opaque" },
+          "block": { "$ref": "#/$defs/opaque" }
+        },
+        "required": ["chain_id", "transaction_hash", "source", "transaction", "receipt", "block"],
+        "additionalProperties": false
+      },
+      "dry_run": {
+        "type": "object",
+        "properties": {
+          "dry_run": { "const": true },
+          "chain_id": { "$ref": "#/$defs/chain_id" },
+          "transaction_hash": { "$ref": "#/$defs/tx_hash" },
+          "destination": { "type": "string", "pattern": "/<redacted>$" },
+          "requests": { "type": "array", "minItems": 4, "items": { "type": "object" } }
+        },
+        "required": ["dry_run", "chain_id", "transaction_hash", "destination", "requests"],
+        "additionalProperties": false
+      }
+    }
+  }
+}

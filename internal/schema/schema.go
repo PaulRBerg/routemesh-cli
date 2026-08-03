@@ -1,0 +1,136 @@
+// Package schema exposes the CLI's embedded runtime contract catalog.
+package schema
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+//go:embed catalog.json
+var catalogJSON []byte
+
+type command struct {
+	Summary    string         `json:"summary"`
+	SideEffect string         `json:"side_effect"`
+	InputModes []string       `json:"input_modes"`
+	Input      map[string]any `json:"input"`
+	Output     map[string]any `json:"output"`
+	DryRun     map[string]any `json:"dry_run"`
+}
+
+type catalog struct {
+	Common   map[string]map[string]any `json:"common"`
+	Commands map[string]command        `json:"commands"`
+}
+
+type IndexEntry struct {
+	Name          string   `json:"name"`
+	Summary       string   `json:"summary"`
+	SideEffect    string   `json:"side_effect"`
+	InputModes    []string `json:"input_modes"`
+	OutputFormats []string `json:"output_formats"`
+	SchemaCommand string   `json:"schema_command"`
+}
+
+func load() (catalog, error) {
+	var parsed catalog
+	if err := json.Unmarshal(catalogJSON, &parsed); err != nil {
+		return catalog{}, fmt.Errorf("decode embedded schema catalog: %w", err)
+	}
+	return parsed, nil
+}
+
+func Index() (map[string]any, error) {
+	parsed, err := load()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(parsed.Commands))
+	for name := range parsed.Commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]IndexEntry, 0, len(names)+1)
+	for _, name := range names {
+		item := parsed.Commands[name]
+		displayName := strings.ReplaceAll(name, "-", " ")
+		entries = append(entries, IndexEntry{
+			Name:          displayName,
+			Summary:       item.Summary,
+			SideEffect:    item.SideEffect,
+			InputModes:    item.InputModes,
+			OutputFormats: []string{"json", "ndjson"},
+			SchemaCommand: "routemesh schema " + displayName,
+		})
+	}
+	entries = append(entries, IndexEntry{
+		Name:          "schema api",
+		Summary:       "Fetch RouteMesh's current official OpenAPI document.",
+		SideEffect:    "read_only",
+		InputModes:    []string{"none"},
+		OutputFormats: []string{"json", "ndjson"},
+		SchemaCommand: "routemesh schema schema",
+	})
+	return map[string]any{
+		"schema_draft": "https://json-schema.org/draft/2020-12/schema",
+		"commands":     entries,
+	}, nil
+}
+
+func Detail(parts ...string) (map[string]any, error) {
+	parsed, err := load()
+	if err != nil {
+		return nil, err
+	}
+	name := strings.ReplaceAll(strings.Join(parts, "-"), " ", "-")
+	item, exists := parsed.Commands[name]
+	if !exists {
+		return nil, fmt.Errorf("unknown command %q", strings.Join(parts, " "))
+	}
+	defs := make(map[string]any, len(parsed.Common)+5)
+	for key, value := range parsed.Common {
+		defs[key] = value
+	}
+	defs["input"] = item.Input
+	defs["output"] = item.Output
+	defs["stderr_event"] = parsed.Common["stderr_event"]
+	defs["dry_run"] = item.DryRun
+	defs["exit_codes"] = parsed.Common["exit_codes"]
+	if name == "rpc" {
+		defs["jsonrpc_request"] = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"jsonrpc": map[string]any{"const": "2.0"},
+				"method":  map[string]any{"type": "string", "pattern": `^[A-Za-z0-9_.:-]{1,128}$`},
+				"params":  map[string]any{"oneOf": []any{map[string]any{"type": "array"}, map[string]any{"type": "object"}}, "description": "Method-dependent opaque JSON.", "x-routemesh-untrusted": true},
+				"id":      map[string]any{"type": []string{"string", "integer"}},
+			},
+			"required":             []string{"jsonrpc", "method", "id"},
+			"additionalProperties": false,
+		}
+	}
+	return map[string]any{
+		"$schema":                      "https://json-schema.org/draft/2020-12/schema",
+		"$id":                          "https://github.com/PaulRBerg/routemesh-cli/schema/" + name,
+		"title":                        "routemesh " + strings.ReplaceAll(name, "-", " ") + " contract",
+		"description":                  item.Summary,
+		"oneOf":                        []any{map[string]any{"$ref": "#/$defs/output"}, map[string]any{"$ref": "#/$defs/dry_run"}},
+		"$defs":                        defs,
+		"x-routemesh-command":          strings.ReplaceAll(name, "-", " "),
+		"x-routemesh-side-effect":      item.SideEffect,
+		"x-routemesh-input-modes":      item.InputModes,
+		"x-routemesh-output-formats":   []string{"json", "ndjson"},
+		"x-routemesh-input-schema":     "#/$defs/input",
+		"x-routemesh-output-schema":    "#/$defs/output",
+		"x-routemesh-stderr-schema":    "#/$defs/stderr_event",
+		"x-routemesh-dry-run-schema":   "#/$defs/dry_run",
+		"x-routemesh-exit-code-schema": "#/$defs/exit_codes",
+	}, nil
+}
+
+func EmbeddedCatalog() []byte {
+	return append([]byte(nil), catalogJSON...)
+}
