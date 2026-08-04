@@ -227,6 +227,8 @@ just smoke 1
 `just smoke CHAIN_ID` requires an active credential source and exercises health, chain discovery, and the exact ping
 routes without printing the credential.
 
+Contributor workflow and implementation constraints are documented in [AGENTS.md](AGENTS.md).
+
 ## License
 
 MIT © 2026 Paul Razvan Berg. See [LICENSE.md](LICENSE.md).
