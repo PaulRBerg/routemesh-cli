@@ -7,6 +7,8 @@ side-effect gating, NDJSON streaming, machine-readable diagnostics, and stable e
 It does not interpret transactions, discover history through explorers, sign payloads, or claim that one successful
 route proves general provider or archive health.
 
+This is an unofficial, community-built project and is not affiliated with or endorsed by RouteMesh.
+
 ## Install
 
 Go 1.26 or newer is required.

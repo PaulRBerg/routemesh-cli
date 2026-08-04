@@ -121,7 +121,7 @@ func Execute(ctx context.Context, args []string, dependencies Dependencies) int 
 	parser, err := kong.New(
 		cli,
 		kong.Name("routemesh"),
-		kong.Description("A thin, deterministic RouteMesh client for scripts and coding agents."),
+		kong.Description("A thin, deterministic RouteMesh client for scripts and coding agents.\n\nThis is an unofficial, community-built CLI and is not affiliated with or endorsed by RouteMesh."),
 		kong.Writers(dependencies.Stdout, dependencies.Stderr),
 		kong.UsageOnError(),
 	)
