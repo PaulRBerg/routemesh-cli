@@ -107,15 +107,11 @@ func (command *InitCmd) Run(runtime *Runtime) error {
 	if returned.Cmp(new(big.Int).SetUint64(chainID)) != 0 {
 		return failure.Evidencef("chain_mismatch", "eth_chainId did not match the explicit chain ID")
 	}
-	if err := runtime.emitContract("init", "output", output.Document{JSON: map[string]any{
+	return runtime.emitContract("init", "output", output.Document{JSON: map[string]any{
 		"initialized":   true,
 		"chain_id":      command.ChainID,
 		"active_source": "keychain",
-	}}); err != nil {
-		return err
-	}
-	writeBanner(runtime.stderr)
-	return nil
+	}})
 }
 
 func (*AuthStatusCmd) Run(runtime *Runtime) error {
