@@ -26,8 +26,8 @@ type CLI struct {
 	MaxOutputBytes int64         `name:"max-output-bytes" default:"1048576" env:"ROUTEMESH_MAX_OUTPUT_BYTES" help:"Maximum encoded stdout bytes."`
 	Timeout        time.Duration `name:"timeout" default:"30s" help:"Overall command timeout."`
 
-	Schema  SchemaCmd  `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
 	Init    InitCmd    `cmd:"" help:"Store and validate a RouteMesh API key in macOS Keychain."`
+	Schema  SchemaCmd  `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
 	Auth    AuthCmd    `cmd:"" help:"Inspect or clear stored credentials."`
 	Health  HealthCmd  `cmd:"" help:"Check public RouteMesh service readiness."`
 	Chains  ChainsCmd  `cmd:"" help:"List the live RouteMesh chain catalog."`
@@ -42,7 +42,7 @@ type SchemaCmd struct {
 }
 
 type InitCmd struct {
-	ChainID string `arg:"" name:"chain-id" help:"Canonical positive decimal chain ID."`
+	ChainID string `arg:"" name:"chain-id" optional:"" default:"1" help:"Canonical positive decimal chain ID to validate the stored key against (default: 1)."`
 	DryRun  bool   `name:"dry-run" help:"Validate and emit the Keychain/probe plan without side effects."`
 }
 

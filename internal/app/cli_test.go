@@ -265,6 +265,28 @@ func TestInitValidatesTheStoredKeyIgnoringEnvironmentOverride(t *testing.T) {
 	assert.NotContains(t, result.stdout+result.stderr, "sentinel")
 }
 
+func TestInitDefaultsToChainOneWhenChainIDIsOmitted(t *testing.T) {
+	t.Parallel()
+
+	keychain := &keychainStub{available: true, key: "keychain-sentinel"}
+	var requestedURL string
+	doer := &doerStub{do: func(request *http.Request) (*http.Response, error) {
+		requestedURL = request.URL.String()
+		return httpResponse(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, nil), nil
+	}}
+	result := execute(t, []string{"init"}, Dependencies{
+		HTTPClient: doer,
+		Keychain:   keychain,
+	})
+	assert.Equal(t, 0, result.code)
+	assert.Contains(t, requestedURL, "/rpc/1/")
+	assert.Equal(t, "1", decodeObject(t, result.stdout)["chain_id"])
+
+	dryRun := execute(t, []string{"init", "--dry-run"}, Dependencies{Keychain: keychain})
+	assert.Equal(t, 0, dryRun.code)
+	assert.Equal(t, "1", decodeObject(t, dryRun.stdout)["chain_id"])
+}
+
 func TestSchemaAPIFetch(t *testing.T) {
 	t.Parallel()
 

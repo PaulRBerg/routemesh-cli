@@ -33,13 +33,14 @@ Ordinary requests use the first non-empty source in this order:
 
 There is deliberately no API-key flag, credential file, or credentialized URL output.
 
-On macOS, initialize Keychain against an explicit chain. Keychain itself prompts for the secret; the secret is not put
-in process arguments. The stored key is then retrieved and probed with `eth_chainId`, ignoring any environment override
-for that validation.
+On macOS, initialize Keychain. Keychain itself prompts for the secret; the secret is not put in process arguments. The
+stored key is then retrieved and probed with `eth_chainId`, ignoring any environment override for that validation.
+Validation defaults to chain ID 1 (Ethereum mainnet); pass an explicit chain ID to validate against a different chain.
 
 ```sh
-routemesh init 1 --dry-run
-routemesh init 1
+routemesh init --dry-run
+routemesh init
+routemesh init 10 --dry-run
 routemesh auth status
 routemesh auth clear --dry-run
 routemesh auth clear
