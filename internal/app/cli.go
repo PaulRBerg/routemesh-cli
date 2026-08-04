@@ -124,6 +124,7 @@ func Execute(ctx context.Context, args []string, dependencies Dependencies) int 
 		kong.Description("A thin, deterministic RouteMesh client for scripts and coding agents.\n\nThis is an unofficial, community-built CLI and is not affiliated with or endorsed by RouteMesh."),
 		kong.Writers(dependencies.Stdout, dependencies.Stderr),
 		kong.UsageOnError(),
+		kong.Help(helpPrinter),
 	)
 	if err != nil {
 		emitError(dependencies.Stderr, failure.Wrap(failure.Validation, "schema_error", "initialize command schema", err))
