@@ -6,6 +6,10 @@ default:
     mkdir -p bin
     go build -o bin/routemesh ./cmd/routemesh
 
+# Install routemesh into GOBIN (or GOPATH/bin when GOBIN is unset).
+@install-cli:
+    go install ./cmd/routemesh
+
 # Run all Go tests.
 @test:
     go test ./...
