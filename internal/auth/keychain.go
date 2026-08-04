@@ -31,7 +31,7 @@ type Store interface {
 	Platform() string
 	ToolPath() string
 	Get(context.Context) (string, error)
-	AddInteractive(context.Context, io.Reader, io.Writer, io.Writer) error
+	AddInteractive(context.Context, string, io.Writer, io.Writer) error
 	Delete(context.Context) (bool, error)
 }
 
@@ -109,14 +109,14 @@ func (s *MacStore) Get(ctx context.Context) (string, error) {
 	return key, nil
 }
 
-func (s *MacStore) AddInteractive(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
+func (s *MacStore) AddInteractive(ctx context.Context, key string, stdout, stderr io.Writer) error {
 	if !s.Available() {
 		return ErrUnavailable
 	}
 	args := []string{
 		"add-generic-password", "-U", "-s", KeychainService, "-a", KeychainAccount, "-w",
 	}
-	if err := s.runner.Run(ctx, s.path, args, stdin, stdout, stderr); err != nil {
+	if err := s.runner.Run(ctx, s.path, args, strings.NewReader(key+"\n"), stdout, stderr); err != nil {
 		return fmt.Errorf("store Keychain item: %w", err)
 	}
 	return nil

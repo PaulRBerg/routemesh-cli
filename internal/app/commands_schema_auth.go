@@ -62,7 +62,7 @@ func (command *InitCmd) Run(runtime *Runtime) error {
 			"chain_id":      command.ChainID,
 			"steps": []any{
 				map[string]any{"action": "check_keychain_tool", "available": available},
-				map[string]any{"action": "add_keychain_item", "service": auth.KeychainService, "account": auth.KeychainAccount, "secret_input": "keychain_prompt"},
+				map[string]any{"action": "add_keychain_item", "service": auth.KeychainService, "account": auth.KeychainAccount, "secret_input": "cli_prompt"},
 				map[string]any{"action": "retrieve_keychain_item"},
 				map[string]any{"action": "rpc_probe", "method": "eth_chainId", "destination": transport.RedactedDestination(runtime.rpcBase, command.ChainID)},
 			},
@@ -78,7 +78,11 @@ func (command *InitCmd) Run(runtime *Runtime) error {
 	if runtime.keychain == nil || !runtime.keychain.Available() {
 		return failure.New(failure.Credential, "keychain_unavailable", "macOS Keychain is unavailable on this platform")
 	}
-	if err := runtime.keychain.AddInteractive(runtime.ctx, runtime.stdin, runtime.stderr, runtime.stderr); err != nil {
+	apiKey, err := auth.ReadAPIKeyInteractive(runtime.stdin, runtime.stderr)
+	if err != nil {
+		return err
+	}
+	if err := runtime.keychain.AddInteractive(runtime.ctx, apiKey, runtime.stderr, runtime.stderr); err != nil {
 		return failure.Wrap(failure.Credential, "keychain_error", "could not store the RouteMesh API key in Keychain", err)
 	}
 	key, err := runtime.keychain.Get(runtime.ctx)

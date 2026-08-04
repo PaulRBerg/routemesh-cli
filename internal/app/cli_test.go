@@ -36,6 +36,7 @@ type keychainStub struct {
 	gets      int
 	adds      int
 	deletes   int
+	addedKey  string
 }
 
 func (s *keychainStub) Available() bool { return s.available }
@@ -50,8 +51,9 @@ func (s *keychainStub) Get(context.Context) (string, error) {
 	s.gets++
 	return s.key, s.getErr
 }
-func (s *keychainStub) AddInteractive(context.Context, io.Reader, io.Writer, io.Writer) error {
+func (s *keychainStub) AddInteractive(_ context.Context, key string, _, _ io.Writer) error {
 	s.adds++
+	s.addedKey = key
 	return nil
 }
 func (s *keychainStub) Delete(context.Context) (bool, error) {
@@ -256,13 +258,29 @@ func TestInitValidatesTheStoredKeyIgnoringEnvironmentOverride(t *testing.T) {
 		HTTPClient: doer,
 		Keychain:   keychain,
 		Getenv:     func(string) string { return "environment-sentinel" },
+		Stdin:      strings.NewReader("typed-key\ntyped-key\n"),
 	})
 	assert.Equal(t, 0, result.code)
 	assert.Equal(t, 1, keychain.adds)
+	assert.Equal(t, "typed-key", keychain.addedKey)
 	assert.Equal(t, 1, keychain.gets)
 	assert.Contains(t, requestedURL, "keychain-sentinel")
 	assert.NotContains(t, requestedURL, "environment-sentinel")
 	assert.NotContains(t, result.stdout+result.stderr, "sentinel")
+}
+
+func TestInitFailsFastOnMismatchedAPIKeyEntry(t *testing.T) {
+	t.Parallel()
+
+	keychain := &keychainStub{available: true, key: "keychain-sentinel"}
+	result := execute(t, []string{"init", "1"}, Dependencies{
+		Keychain: keychain,
+		Stdin:    strings.NewReader("first-typed\nsecond-typed\n"),
+	})
+	assert.Equal(t, 3, result.code)
+	assert.Equal(t, 0, keychain.adds)
+	assert.NotContains(t, result.stdout+result.stderr, "first-typed")
+	assert.NotContains(t, result.stdout+result.stderr, "second-typed")
 }
 
 func TestInitDefaultsToChainOneWhenChainIDIsOmitted(t *testing.T) {
@@ -277,6 +295,7 @@ func TestInitDefaultsToChainOneWhenChainIDIsOmitted(t *testing.T) {
 	result := execute(t, []string{"init"}, Dependencies{
 		HTTPClient: doer,
 		Keychain:   keychain,
+		Stdin:      strings.NewReader("typed-key\ntyped-key\n"),
 	})
 	assert.Equal(t, 0, result.code)
 	assert.Contains(t, requestedURL, "/rpc/1/")

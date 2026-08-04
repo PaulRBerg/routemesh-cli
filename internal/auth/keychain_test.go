@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/paulrberg/routemesh-cli/internal/failure"
@@ -15,14 +14,22 @@ import (
 type runnerStub struct {
 	runName   string
 	runArgs   []string
+	runStdin  string
 	runErr    error
 	output    string
 	outputErr error
 }
 
-func (r *runnerStub) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+func (r *runnerStub) Run(_ context.Context, name string, args []string, stdin io.Reader, _, _ io.Writer) error {
 	r.runName = name
 	r.runArgs = append([]string(nil), args...)
+	if stdin != nil {
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		r.runStdin = string(data)
+	}
 	return r.runErr
 }
 
@@ -44,12 +51,13 @@ func TestAddInteractiveKeepsSecretOutOfArgv(t *testing.T) {
 
 	runner := &runnerStub{}
 	store := availableStore(runner)
-	require.NoError(t, store.AddInteractive(context.Background(), strings.NewReader("sentinel-secret"), io.Discard, io.Discard))
+	require.NoError(t, store.AddInteractive(context.Background(), "sentinel-secret", io.Discard, io.Discard))
 	assert.Equal(t, "/usr/bin/security", runner.runName)
 	require.NotEmpty(t, runner.runArgs)
 	assert.Equal(t, "-w", runner.runArgs[len(runner.runArgs)-1])
 	assert.NotContains(t, runner.runArgs, "sentinel-secret")
 	assert.Equal(t, []string{"add-generic-password", "-U", "-s", KeychainService, "-a", KeychainAccount, "-w"}, runner.runArgs)
+	assert.Equal(t, "sentinel-secret\n", runner.runStdin)
 }
 
 func TestResolveCredentialPrecedence(t *testing.T) {
