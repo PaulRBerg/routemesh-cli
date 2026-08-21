@@ -52,12 +52,15 @@ changes the environment. Non-macOS systems can use `ROUTEMESH_API_KEY`; Keychain
 ## Interface
 
 ```text
+routemesh --version
 routemesh [--output json|ndjson] [--pretty]
           [--select JSON_POINTER]...
           [--max-output-bytes N]
           [--timeout DURATION]
           COMMAND
 ```
+
+Every build reports the fixed version `1.0.0`; this project does not maintain a version progression.
 
 Output defaults to compact JSON with a 1 MiB encoded limit. `ROUTEMESH_OUTPUT` and
 `ROUTEMESH_MAX_OUTPUT_BYTES` set the corresponding defaults. `--pretty` applies only to JSON.

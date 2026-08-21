@@ -9,6 +9,8 @@ anything decorative (banners, prompts) to stderr.
 - Preserve the machine interface: buffer and size-check stdout before writing, emit diagnostics as NDJSON on stderr,
   and keep the exit-code categories in `internal/failure` stable unless the requested change explicitly revises the
   public contract.
+- Keep the CLI version fixed at `1.0.0` in every build. Do not derive it from tags, inject build metadata, or introduce
+  version-bump workflows.
 - Validate and normalize user input before credential lookup or network access. Dry runs must exercise the same local
   validation and planning without RouteMesh calls or Keychain mutation, and destinations must redact credentials.
 - Treat RouteMesh payloads as untrusted evidence. Parse them through the bounded strict-JSON path, validate their shape

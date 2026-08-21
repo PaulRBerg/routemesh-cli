@@ -19,12 +19,15 @@ import (
 	"github.com/paulrberg/routemesh-cli/internal/transport"
 )
 
+const version = "1.0.0"
+
 type CLI struct {
-	Output         string        `name:"output" enum:"json,ndjson" default:"json" env:"ROUTEMESH_OUTPUT" help:"Output format: json or ndjson."`
-	Pretty         bool          `name:"pretty" help:"Indent JSON output (not valid with NDJSON)."`
-	Select         []string      `name:"select" placeholder:"JSON_POINTER" help:"Apply an RFC 6901 pointer before the output limit; repeat for multiple values."`
-	MaxOutputBytes int64         `name:"max-output-bytes" default:"1048576" env:"ROUTEMESH_MAX_OUTPUT_BYTES" help:"Maximum encoded stdout bytes."`
-	Timeout        time.Duration `name:"timeout" default:"30s" help:"Overall command timeout."`
+	Version        kong.VersionFlag `name:"version" help:"Print version information and exit."`
+	Output         string           `name:"output" enum:"json,ndjson" default:"json" env:"ROUTEMESH_OUTPUT" help:"Output format: json or ndjson."`
+	Pretty         bool             `name:"pretty" help:"Indent JSON output (not valid with NDJSON)."`
+	Select         []string         `name:"select" placeholder:"JSON_POINTER" help:"Apply an RFC 6901 pointer before the output limit; repeat for multiple values."`
+	MaxOutputBytes int64            `name:"max-output-bytes" default:"1048576" env:"ROUTEMESH_MAX_OUTPUT_BYTES" help:"Maximum encoded stdout bytes."`
+	Timeout        time.Duration    `name:"timeout" default:"30s" help:"Overall command timeout."`
 
 	Init    InitCmd    `cmd:"" help:"Store and validate a RouteMesh API key in macOS Keychain."`
 	Schema  SchemaCmd  `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
@@ -118,11 +121,18 @@ type Runtime struct {
 func Execute(ctx context.Context, args []string, dependencies Dependencies) int {
 	dependencies = withDefaults(dependencies)
 	cli := &CLI{}
+	parserExited := false
+	parserExitCode := failure.Success
 	parser, err := kong.New(
 		cli,
 		kong.Name("routemesh"),
 		kong.Description("A thin, deterministic RouteMesh client for scripts and coding agents.\n\nThis is an unofficial, community-built CLI and is not affiliated with or endorsed by RouteMesh."),
+		kong.Vars{"version": version},
 		kong.Writers(dependencies.Stdout, dependencies.Stderr),
+		kong.Exit(func(code int) {
+			parserExited = true
+			parserExitCode = code
+		}),
 		kong.UsageOnError(),
 		kong.Help(helpPrinter),
 	)
@@ -131,6 +141,9 @@ func Execute(ctx context.Context, args []string, dependencies Dependencies) int 
 		return failure.Validation
 	}
 	parsed, err := parser.Parse(args)
+	if parserExited {
+		return parserExitCode
+	}
 	if err != nil {
 		emitError(dependencies.Stderr, failure.Wrap(failure.Validation, "usage_error", cleanMessage(err.Error()), err))
 		return failure.Validation

@@ -111,6 +111,15 @@ func decodeLines(t *testing.T, raw string) []map[string]any {
 	return values
 }
 
+func TestVersionHelper(t *testing.T) {
+	t.Parallel()
+
+	result := execute(t, []string{"--version"}, Dependencies{})
+	assert.Equal(t, 0, result.code)
+	assert.Equal(t, "1.0.0\n", result.stdout)
+	assert.Empty(t, result.stderr)
+}
+
 func TestSchemaIndexAndDetail(t *testing.T) {
 	t.Parallel()
 
