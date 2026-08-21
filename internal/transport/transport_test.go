@@ -103,6 +103,125 @@ func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 	assert.Len(t, events, 2)
 }
 
+func TestDoRPCRetriesTransientHTTPWithRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 21, 20, 0, 0, 0, time.UTC)
+	responses := []responseSpec{
+		{status: http.StatusTooManyRequests, body: "rate limited", headers: map[string]string{"Retry-After": now.Add(3 * time.Second).Format(http.TimeFormat)}},
+		{status: http.StatusOK, body: `{"jsonrpc":"2.0","id":1,"result":"0x1"}`},
+	}
+	calls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			item := responses[calls]
+			calls++
+			return response(item.status, item.body, item.headers), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+		Now: func() time.Time { return now },
+		Rand: func() float64 {
+			t.Fatal("valid Retry-After used random backoff")
+			return 0
+		},
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Attempts)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, []time.Duration{3 * time.Second}, slept)
+}
+
+func TestDoRPCRetriesTransientHTTPWithJitteredBackoff(t *testing.T) {
+	t.Parallel()
+
+	responses := []responseSpec{
+		{status: http.StatusServiceUnavailable, body: "temporarily unavailable"},
+		{status: http.StatusServiceUnavailable, body: "temporarily unavailable"},
+		{status: http.StatusOK, body: `{"jsonrpc":"2.0","id":1,"result":"0x1"}`},
+	}
+	fractions := []float64{0.25, 0.75}
+	calls := 0
+	randCalls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			item := responses[calls]
+			calls++
+			return response(item.status, item.body, item.headers), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+		Rand: func() float64 {
+			fraction := fractions[randCalls]
+			randCalls++
+			return fraction
+		},
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Attempts)
+	assert.Equal(t, 3, calls)
+	assert.Equal(t, 2, randCalls)
+	assert.Equal(t, []time.Duration{250 * time.Millisecond, 1500 * time.Millisecond}, slept)
+}
+
+func TestDoRPCExhaustsTransientHTTPRetriesAsHTTPError(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return response(http.StatusServiceUnavailable, "temporarily unavailable", nil), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+		Rand: func() float64 { return 1 },
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Transport, typed.ExitCode)
+	assert.Equal(t, "http_error", typed.Kind)
+	assert.Equal(t, "RouteMesh returned HTTP 503 with no valid JSON-RPC response", typed.Message)
+	assert.Equal(t, 3, result.Attempts)
+	assert.Equal(t, http.StatusServiceUnavailable, result.HTTPStatus)
+	assert.Equal(t, 3, calls)
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second}, slept)
+}
+
+func TestHTTPRetryDelayRejectsRetryAfterOverCap(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 21, 20, 0, 0, 0, time.UTC)
+	delay := httpRetryDelay(now.Add(31*time.Second).Format(http.TimeFormat), now, 1, func() float64 { return 0.5 })
+	assert.Equal(t, 500*time.Millisecond, delay)
+}
+
+func TestRetryableHTTPStatusesAreExact(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
+		assert.True(t, isRetryableHTTPStatus(status), status)
+	}
+	for _, status := range []int{http.StatusUnauthorized, http.StatusInternalServerError, http.StatusNotImplemented} {
+		assert.False(t, isRetryableHTTPStatus(status), status)
+	}
+}
+
 func TestDoRPCHonorsZeroRetryAfter(t *testing.T) {
 	t.Parallel()
 
@@ -147,6 +266,34 @@ func TestDoRPCNeverRetriesAllowedWrites(t *testing.T) {
 	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_sendRawTransaction"))
 	require.NoError(t, err)
 	assert.True(t, result.HasError)
+	assert.Equal(t, 1, calls)
+}
+
+func TestDoRPCNeverRetriesTransientHTTPForWrites(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return response(http.StatusTooManyRequests, "rate limited", nil), nil
+		}),
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("write request attempted to sleep for a retry")
+			return nil
+		},
+		Rand: func() float64 {
+			t.Fatal("write request attempted to calculate retry jitter")
+			return 0
+		},
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_sendRawTransaction"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Transport, typed.ExitCode)
+	assert.Equal(t, "http_error", typed.Kind)
+	assert.Equal(t, 1, result.Attempts)
 	assert.Equal(t, 1, calls)
 }
 
@@ -197,6 +344,7 @@ func TestDoRPCRetriesBatchOnlyWhenEveryItemIsRetryable(t *testing.T) {
 			slept = append(slept, delay)
 			return nil
 		},
+		Rand: func() float64 { return 1 },
 	})
 	result, err := client.DoRPC(context.Background(), "1", envelope)
 	require.NoError(t, err)
@@ -218,6 +366,7 @@ func TestDoRPCCancellationDuringBackoffIsTransportFailure(t *testing.T) {
 			cancel()
 			return ctx.Err()
 		},
+		Rand: func() float64 { return 1 },
 	})
 	_, err := client.DoRPC(ctx, "1", generated(t, "eth_chainId"))
 	var typed *failure.Error
@@ -261,17 +410,24 @@ func TestDoRPCClassifiesContradictoryAndTransportFailures(t *testing.T) {
 func TestDoRPCClassifiesUnauthorizedWithoutTrustingTheBody(t *testing.T) {
 	t.Parallel()
 
+	calls := 0
 	client := New(Options{
 		APIKey: "sentinel-secret",
 		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
 			return response(http.StatusUnauthorized, "not-json", nil), nil
 		}),
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("unauthorized response attempted to sleep for a retry")
+			return nil
+		},
 	})
 	_, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
 	var typed *failure.Error
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, failure.Credential, typed.ExitCode)
 	assert.NotContains(t, typed.Error(), "sentinel-secret")
+	assert.Equal(t, 1, calls)
 }
 
 func TestDoRPCRejectsUnsafeChainAtTransportBoundary(t *testing.T) {

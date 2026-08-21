@@ -155,8 +155,10 @@ routemesh rpc 1 eth_sendRawTransaction \
   --dry-run
 ```
 
-An allowed write is never retried. Read-only requests are retried at most once, and only for RouteMesh's documented
-`-32003`, `-32603`, and `-32000` cases. A batch is retried only when every item failed with a retryable code.
+An allowed write is never retried. Read-only requests get at most three total attempts for RouteMesh's documented
+`-32003`, `-32603`, and `-32000` JSON-RPC errors, or for HTTP 429, 502, 503, and 504 responses that contain no usable
+JSON-RPC evidence. A batch is retried for JSON-RPC errors only when every item failed with a retryable code. Valid
+`Retry-After` delays are honored up to 30 seconds; otherwise retries use bounded exponential backoff with full jitter.
 
 The complete final JSON-RPC response is emitted even when it contains an error; the process then exits `5`.
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulrberg/routemesh-cli/internal/auth"
 	"github.com/stretchr/testify/assert"
@@ -149,6 +150,35 @@ func TestRPCDryRunDoesNoHTTPOrCredentialAccess(t *testing.T) {
 	assert.NotContains(t, result.stdout, "sentinel-key")
 	value := decodeObject(t, result.stdout)
 	assert.Equal(t, "https://lb.routeme.sh/rpc/1/<redacted>", value["destination"])
+	retry := value["retry"].(map[string]any)
+	assert.Equal(t, true, retry["eligible"])
+	assert.Equal(t, float64(3), retry["max_attempts"])
+}
+
+func TestRPCRetryDependenciesReachTransport(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	var slept []time.Duration
+	doer := &doerStub{do: func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return httpResponse(http.StatusServiceUnavailable, "temporarily unavailable", nil), nil
+		}
+		return httpResponse(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, nil), nil
+	}}
+	result := execute(t, []string{"rpc", "1", "eth_chainId"}, Dependencies{
+		HTTPClient: doer,
+		Getenv:     func(string) string { return "key" },
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+		Rand: func() float64 { return 0.5 },
+	})
+	assert.Equal(t, 0, result.code)
+	assert.Equal(t, 2, doer.calls)
+	assert.Equal(t, []time.Duration{500 * time.Millisecond}, slept)
 }
 
 func TestWriteGatingAndDryRunRetryContract(t *testing.T) {

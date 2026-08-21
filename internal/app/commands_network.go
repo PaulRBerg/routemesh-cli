@@ -158,8 +158,10 @@ func (command *RPCCmd) Run(runtime *Runtime) error {
 	}
 	if command.DryRun {
 		sideEffect := "read_only"
+		maxAttempts := transport.ReadRPCMaxAttempts
 		if envelope.HasWrite() {
 			sideEffect = "external_write"
+			maxAttempts = transport.WriteRPCMaxAttempts
 		}
 		return runtime.emitContract("rpc", "dry_run", output.Document{JSON: map[string]any{
 			"dry_run":     true,
@@ -169,7 +171,7 @@ func (command *RPCCmd) Run(runtime *Runtime) error {
 			"request":     envelope.Value(),
 			"retry": map[string]any{
 				"eligible":     !envelope.HasWrite(),
-				"max_attempts": map[bool]int{true: 1, false: 2}[envelope.HasWrite()],
+				"max_attempts": maxAttempts,
 			},
 		}})
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,10 +21,17 @@ import (
 )
 
 const (
-	DefaultAPIBase    = "https://api.routeme.sh"
-	DefaultRPCBase    = "https://lb.routeme.sh"
-	DefaultOpenAPIURL = "https://routeme.sh/docs/api-reference/openapi.json"
-	MaxResponseBytes  = 32 << 20
+	DefaultAPIBase      = "https://api.routeme.sh"
+	DefaultRPCBase      = "https://lb.routeme.sh"
+	DefaultOpenAPIURL   = "https://routeme.sh/docs/api-reference/openapi.json"
+	MaxResponseBytes    = 32 << 20
+	ReadRPCMaxAttempts  = 3
+	WriteRPCMaxAttempts = 1
+
+	maxRetryAfter           = 30 * time.Second
+	httpRetryBaseDelay      = time.Second
+	rateLimitRetryBaseDelay = 2 * time.Second
+	serverRetryBaseDelay    = 250 * time.Millisecond
 )
 
 type Doer interface {
@@ -32,6 +40,7 @@ type Doer interface {
 
 type Diagnostic func(any)
 type Sleep func(context.Context, time.Duration) error
+type Rand func() float64
 
 type Options struct {
 	HTTPClient Doer
@@ -42,6 +51,7 @@ type Options struct {
 	Diagnostic Diagnostic
 	Sleep      Sleep
 	Now        func() time.Time
+	Rand       Rand
 }
 
 type Client struct {
@@ -53,6 +63,7 @@ type Client struct {
 	diagnostic Diagnostic
 	sleep      Sleep
 	now        func() time.Time
+	rand       Rand
 }
 
 type RPCResult struct {
@@ -85,6 +96,10 @@ func New(options Options) *Client {
 	if now == nil {
 		now = time.Now
 	}
+	random := options.Rand
+	if random == nil {
+		random = rand.Float64
+	}
 	return &Client{
 		httpClient: httpClient,
 		apiBase:    strings.TrimRight(apiBase, "/"),
@@ -94,6 +109,7 @@ func New(options Options) *Client {
 		diagnostic: diagnostic,
 		sleep:      sleep,
 		now:        now,
+		rand:       random,
 	}
 }
 
@@ -149,20 +165,32 @@ func (c *Client) DoRPC(ctx context.Context, chainID string, envelope jsonrpc.Env
 	if err != nil {
 		return RPCResult{}, err
 	}
-	maxAttempts := 2
+	maxAttempts := ReadRPCMaxAttempts
 	if envelope.HasWrite() {
-		maxAttempts = 1
+		maxAttempts = WriteRPCMaxAttempts
 	}
 	started := time.Now()
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		result, retryAfter, attemptErr := c.rpcAttempt(ctx, destination, redacted, body, envelope, attempt)
+		result, retryAfter, transientHTTP, attemptErr := c.rpcAttempt(ctx, destination, redacted, body, envelope, attempt)
 		result.Attempts = attempt
 		result.Latency = time.Since(started)
 		if attemptErr != nil {
 			return result, attemptErr
 		}
-		delay, retry := retryDelay(result.ErrorCodes, result.HasError, retryAfter, c.now())
-		if !retry || attempt == maxAttempts {
+		if transientHTTP && attempt == maxAttempts {
+			return result, invalidRPCResponseFailure(result.HTTPStatus)
+		}
+		if attempt == maxAttempts {
+			return result, nil
+		}
+		delay, retry := time.Duration(0), false
+		if transientHTTP {
+			delay = httpRetryDelay(retryAfter, c.now(), attempt, c.rand)
+			retry = true
+		} else {
+			delay, retry = retryDelay(result.ErrorCodes, result.HasError, retryAfter, c.now(), attempt, c.rand)
+		}
+		if !retry {
 			return result, nil
 		}
 		if err := c.sleep(ctx, delay); err != nil {
@@ -179,16 +207,16 @@ func (c *Client) rpcAttempt(
 	body []byte,
 	envelope jsonrpc.Envelope,
 	attempt int,
-) (RPCResult, string, error) {
+) (RPCResult, string, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, destination, bytes.NewReader(body))
 	if err != nil {
-		return RPCResult{}, "", failure.Wrap(failure.Transport, "transport_error", "create RPC request", err)
+		return RPCResult{}, "", false, failure.Wrap(failure.Transport, "transport_error", "create RPC request", err)
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return RPCResult{}, "", transportFailure(ctx, err)
+		return RPCResult{}, "", false, transportFailure(ctx, err)
 	}
 	for _, batchID := range response.Header.Values("X-Batch-Id") {
 		c.emitAttempt(attempt, redacted, batchID, response.StatusCode)
@@ -198,38 +226,55 @@ func (c *Client) rpcAttempt(
 	}
 	responseBody, readErr := readResponse(response)
 	if readErr != nil {
-		return RPCResult{}, "", readErr
+		return RPCResult{}, "", false, readErr
 	}
 	value, parseErr := strictjson.ParseBounded(responseBody, MaxResponseBytes)
 	if parseErr != nil {
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			if response.StatusCode == http.StatusUnauthorized {
-				return RPCResult{}, "", failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
-			}
-			return RPCResult{}, "", failure.New(failure.Transport, "http_error", fmt.Sprintf("RouteMesh returned HTTP %d with no valid JSON-RPC response", response.StatusCode))
+			return invalidRPCResponse(response, envelope)
 		}
-		return RPCResult{}, "", failure.Wrap(failure.Evidence, "invalid_rpc_response", "RouteMesh returned invalid JSON-RPC evidence", parseErr)
+		return RPCResult{}, "", false, failure.Wrap(failure.Evidence, "invalid_rpc_response", "RouteMesh returned invalid JSON-RPC evidence", parseErr)
 	}
 	result, validateErr := validateResponse(value, envelope)
 	if validateErr != nil {
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			if response.StatusCode == http.StatusUnauthorized {
-				return RPCResult{}, "", failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
-			}
-			return RPCResult{}, "", failure.New(failure.Transport, "http_error", fmt.Sprintf("RouteMesh returned HTTP %d with no valid JSON-RPC response", response.StatusCode))
+			return invalidRPCResponse(response, envelope)
 		}
-		return RPCResult{}, "", failure.Wrap(failure.Evidence, "invalid_rpc_response", "RouteMesh returned contradictory JSON-RPC evidence", validateErr)
+		return RPCResult{}, "", false, failure.Wrap(failure.Evidence, "invalid_rpc_response", "RouteMesh returned contradictory JSON-RPC evidence", validateErr)
 	}
 	result.HTTPStatus = response.StatusCode
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		if response.StatusCode == http.StatusUnauthorized {
-			return RPCResult{}, "", failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
+			return RPCResult{}, "", false, failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
 		}
 		if !result.HasError {
-			return RPCResult{}, "", failure.Evidencef("contradictory_response", "RouteMesh returned HTTP %d with successful JSON-RPC evidence", response.StatusCode)
+			return RPCResult{}, "", false, failure.Evidencef("contradictory_response", "RouteMesh returned HTTP %d with successful JSON-RPC evidence", response.StatusCode)
 		}
 	}
-	return result, response.Header.Get("Retry-After"), nil
+	return result, response.Header.Get("Retry-After"), false, nil
+}
+
+func invalidRPCResponse(response *http.Response, envelope jsonrpc.Envelope) (RPCResult, string, bool, error) {
+	if response.StatusCode == http.StatusUnauthorized {
+		return RPCResult{}, "", false, failure.New(failure.Credential, "credential_rejected", "RouteMesh rejected the configured API key")
+	}
+	if !envelope.HasWrite() && isRetryableHTTPStatus(response.StatusCode) {
+		return RPCResult{HTTPStatus: response.StatusCode}, response.Header.Get("Retry-After"), true, nil
+	}
+	return RPCResult{}, "", false, invalidRPCResponseFailure(response.StatusCode)
+}
+
+func invalidRPCResponseFailure(status int) *failure.Error {
+	return failure.New(failure.Transport, "http_error", fmt.Sprintf("RouteMesh returned HTTP %d with no valid JSON-RPC response", status))
+}
+
+func isRetryableHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) rpcDestinations(chainID string) (string, string, error) {
@@ -274,30 +319,67 @@ func readResponse(response *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-func retryDelay(codes []int64, hasError bool, retryAfter string, now time.Time) (time.Duration, bool) {
+func retryDelay(codes []int64, hasError bool, retryAfter string, now time.Time, attempt int, random Rand) (time.Duration, bool) {
 	if !hasError || len(codes) == 0 {
 		return 0, false
 	}
 	delay := time.Duration(0)
+	hasValidRetryAfter := false
 	for _, code := range codes {
 		switch code {
 		case -32003:
-			candidate, valid := parseRetryAfter(retryAfter, now)
-			if !valid || candidate > 30*time.Second {
-				candidate = 2 * time.Second
+			candidate, valid := boundedRetryAfter(retryAfter, now)
+			if valid {
+				hasValidRetryAfter = true
+			} else {
+				candidate = rateLimitRetryBaseDelay
 			}
 			if candidate > delay {
 				delay = candidate
 			}
 		case -32603, -32000:
-			if 250*time.Millisecond > delay {
-				delay = 250 * time.Millisecond
+			if serverRetryBaseDelay > delay {
+				delay = serverRetryBaseDelay
 			}
 		default:
 			return 0, false
 		}
 	}
+	if !hasValidRetryAfter {
+		delay = jitteredBackoff(delay, attempt, random)
+	}
 	return delay, true
+}
+
+func httpRetryDelay(retryAfter string, now time.Time, attempt int, random Rand) time.Duration {
+	if delay, valid := boundedRetryAfter(retryAfter, now); valid {
+		return delay
+	}
+	return jitteredBackoff(httpRetryBaseDelay, attempt, random)
+}
+
+func boundedRetryAfter(raw string, now time.Time) (time.Duration, bool) {
+	delay, valid := parseRetryAfter(raw, now)
+	return delay, valid && delay <= maxRetryAfter
+}
+
+func jitteredBackoff(base time.Duration, attempt int, random Rand) time.Duration {
+	maximum := base
+	for retry := 1; retry < attempt; retry++ {
+		maximum *= 2
+	}
+	fraction := random()
+	if fraction <= 0 {
+		return time.Nanosecond
+	}
+	if fraction >= 1 {
+		return maximum
+	}
+	delay := time.Duration(float64(maximum) * fraction)
+	if delay == 0 {
+		return time.Nanosecond
+	}
+	return delay
 }
 
 func parseRetryAfter(raw string, now time.Time) (time.Duration, bool) {

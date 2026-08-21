@@ -97,6 +97,7 @@ type Dependencies struct {
 	Keychain   auth.Store
 	Sleep      transport.Sleep
 	Now        func() time.Time
+	Rand       transport.Rand
 	APIBase    string
 	RPCBase    string
 	OpenAPIURL string
@@ -112,6 +113,7 @@ type Runtime struct {
 	keychain   auth.Store
 	sleep      transport.Sleep
 	now        func() time.Time
+	rand       transport.Rand
 	apiBase    string
 	rpcBase    string
 	openAPIURL string
@@ -174,6 +176,7 @@ func Execute(ctx context.Context, args []string, dependencies Dependencies) int 
 		keychain:   dependencies.Keychain,
 		sleep:      dependencies.Sleep,
 		now:        dependencies.Now,
+		rand:       dependencies.Rand,
 		apiBase:    dependencies.APIBase,
 		rpcBase:    dependencies.RPCBase,
 		openAPIURL: dependencies.OpenAPIURL,
@@ -249,6 +252,7 @@ func (r *Runtime) client(key string) *transport.Client {
 		Diagnostic: r.diagnostic,
 		Sleep:      r.sleep,
 		Now:        r.now,
+		Rand:       r.rand,
 	})
 }
 
