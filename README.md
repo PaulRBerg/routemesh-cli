@@ -118,10 +118,14 @@ routemesh chains
 routemesh ping 1
 ```
 
-`health` checks RouteMesh's public service readiness. `chains` validates and numerically sorts the live catalog.
+`health` checks RouteMesh's public service readiness. `chains` validates and numerically sorts the live HTTP RPC
+catalog from `GET /chains/rpc`, replacing the deprecated `GET /chains` endpoint.
 `ping` batches exactly `eth_chainId` and `eth_blockNumber`, verifies the returned chain ID, and reports only those two
 routes and their latency. Request commands require canonical positive decimal chain IDs; aliases and default chains are
 not accepted.
+
+The CLI uses HTTP RPC. For WebSocket clients, RouteMesh exposes a separate supported-chain catalog at `GET /chains/ws`
+and accepts the existing RPC URL with `https://` replaced by `wss://`.
 
 ## JSON-RPC
 

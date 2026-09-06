@@ -114,7 +114,7 @@ func New(options Options) *Client {
 }
 
 func (c *Client) GetAPI(ctx context.Context, endpoint string) (any, time.Duration, error) {
-	if endpoint != "/health" && endpoint != "/chains" {
+	if endpoint != "/health" && endpoint != "/chains/rpc" {
 		return nil, 0, failure.Validationf("invalid_endpoint", "unsupported public API endpoint %q", endpoint)
 	}
 	return c.getJSON(ctx, c.apiBase+endpoint)

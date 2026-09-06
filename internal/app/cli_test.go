@@ -360,14 +360,15 @@ func TestSchemaAPIFetch(t *testing.T) {
 	assert.Equal(t, "3.0.0", decodeObject(t, result.stdout)["openapi"])
 }
 
-func TestHealthAndChainsValidateLiveShapes(t *testing.T) {
+func TestHealthAndRPCChainsValidateLiveShapes(t *testing.T) {
 	t.Parallel()
 
 	doer := &doerStub{do: func(request *http.Request) (*http.Response, error) {
+		assert.Equal(t, http.MethodGet, request.Method)
 		switch request.URL.Path {
 		case "/health":
 			return httpResponse(http.StatusOK, `{"success":true,"message":"ready"}`, nil), nil
-		case "/chains":
+		case "/chains/rpc":
 			return httpResponse(http.StatusOK, `[{"chain_id":"10","name":"Ten"},{"chain_id":"1","name":"One"}]`, nil), nil
 		default:
 			return nil, errors.New("unexpected path")

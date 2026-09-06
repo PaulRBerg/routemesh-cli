@@ -171,7 +171,7 @@
       "dry_run": { "not": {} }
     },
     "chains": {
-      "summary": "List RouteMesh's live supported-chain catalog sorted by numeric chain ID.",
+      "summary": "List RouteMesh's live HTTP RPC chain catalog sorted by numeric chain ID.",
       "side_effect": "read_only",
       "input_modes": ["none"],
       "input": { "type": "object", "maxProperties": 0 },

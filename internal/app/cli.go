@@ -33,7 +33,7 @@ type CLI struct {
 	Schema  SchemaCmd  `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
 	Auth    AuthCmd    `cmd:"" help:"Inspect or clear stored credentials."`
 	Health  HealthCmd  `cmd:"" help:"Check public RouteMesh service readiness."`
-	Chains  ChainsCmd  `cmd:"" help:"List the live RouteMesh chain catalog."`
+	Chains  ChainsCmd  `cmd:"" help:"List the live RouteMesh HTTP RPC chain catalog."`
 	Ping    PingCmd    `cmd:"" help:"Verify eth_chainId and eth_blockNumber for an EVM chain."`
 	RPC     RPCCmd     `cmd:"" name:"rpc" help:"Send strict JSON-RPC requests."`
 	Logs    LogsCmd    `cmd:"" help:"Collect canonical eth_getLogs evidence."`

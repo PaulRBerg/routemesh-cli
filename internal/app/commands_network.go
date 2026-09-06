@@ -46,7 +46,7 @@ func (*HealthCmd) Run(runtime *Runtime) error {
 }
 
 func (*ChainsCmd) Run(runtime *Runtime) error {
-	value, _, err := runtime.publicClient().GetAPI(runtime.ctx, "/chains")
+	value, _, err := runtime.publicClient().GetAPI(runtime.ctx, "/chains/rpc")
 	if err != nil {
 		return err
 	}
