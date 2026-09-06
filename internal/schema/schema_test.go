@@ -28,7 +28,7 @@ func compileDetail(t *testing.T, name string) *jsonschema.Schema {
 func TestAllCommandSchemasCompile(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"schema", "init", "auth-status", "auth-clear", "health", "chains", "ping", "rpc", "logs", "receipt"} {
+	for _, name := range []string{"schema", "init", "auth-status", "auth-clear", "health", "chains", "subscribe", "ping", "rpc", "logs", "receipt"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_ = compileDetail(t, name)
@@ -66,10 +66,39 @@ func TestValidateDefinition(t *testing.T) {
 	}))
 }
 
+func TestWebSocketContracts(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, ValidateDefinition("chains", "input", map[string]any{}))
+	require.NoError(t, ValidateDefinition("chains", "input", map[string]any{"transport": "ws"}))
+	require.Error(t, ValidateDefinition("chains", "input", map[string]any{"transport": "other"}))
+	input := map[string]any{"chain_id": "1", "subscription": "newHeads", "count": 1, "dry_run": false}
+	require.NoError(t, ValidateDefinition("subscribe", "input", input))
+	input["count"] = 0
+	require.Error(t, ValidateDefinition("subscribe", "input", input))
+	input["count"] = 1001
+	require.Error(t, ValidateDefinition("subscribe", "input", input))
+	input["count"] = 1
+	input["subscription"] = "other"
+	require.Error(t, ValidateDefinition("subscribe", "input", input))
+
+	notification := map[string]any{
+		"jsonrpc": "2.0", "method": "eth_subscription",
+		"params": map[string]any{"subscription": "sub-1", "result": map[string]any{"number": "0x1"}},
+	}
+	require.NoError(t, ValidateDefinition("subscribe", "output", []any{notification}))
+	require.Error(t, ValidateDefinition("subscribe", "output", []any{}))
+	notification["id"] = 1
+	require.Error(t, ValidateDefinition("subscribe", "output", []any{notification}))
+	delete(notification, "id")
+	delete(notification["params"].(map[string]any), "result")
+	require.Error(t, ValidateDefinition("subscribe", "output", []any{notification}))
+}
+
 func TestSchemasMarkProviderContentUntrusted(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"health", "chains", "rpc", "logs", "receipt"} {
+	for _, name := range []string{"health", "chains", "subscribe", "rpc", "logs", "receipt"} {
 		detail, err := Detail(name)
 		require.NoError(t, err)
 		assert.Truef(t, containsUntrusted(detail), "%s schema lacks an untrusted annotation", name)
@@ -83,7 +112,7 @@ func TestIndexDescribesEveryDetail(t *testing.T) {
 	require.NoError(t, err)
 	entries, ok := index["commands"].([]IndexEntry)
 	require.True(t, ok)
-	assert.Len(t, entries, 11)
+	assert.Len(t, entries, 12)
 	for _, entry := range entries {
 		assert.NotEmpty(t, entry.Summary)
 		assert.Contains(t, []string{"read_only", "external_write", "conditional"}, entry.SideEffect)

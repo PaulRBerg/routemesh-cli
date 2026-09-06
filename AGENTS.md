@@ -17,13 +17,16 @@ anything decorative (banners, prompts) to stderr.
   and internal consistency, and never silently replace missing evidence with explorer or public-RPC data.
 - Keep command definitions in `internal/app`, the embedded catalog in `internal/schema/catalog.json`, emitted documents,
   and schema tests synchronized. Route bundled-contract output through `Runtime.emitContract`.
+- Keep subscriptions finite by count, deadline, and aggregate response bytes. Buffer their complete output, preserve
+  reorg/removal notifications, and fail on disconnect without reconnecting or implying historical completeness.
 
 ## Code Boundaries
 
 - Keep CLI parsing and orchestration in `internal/app`; inject I/O, clocks, sleep, HTTP, environment, and Keychain
   dependencies through `Dependencies` so command tests remain deterministic.
-- Keep HTTP construction, response bounds, retry policy, diagnostics, and URL redaction in `internal/transport`. Write
-  requests get one attempt; do not broaden retry behavior without explicit evidence that it is safe.
+- Keep HTTP/WebSocket construction, response bounds, retry policy, diagnostics, and URL redaction in
+  `internal/transport`. Inject the WebSocket dialer through `Dependencies`. Write requests get one attempt; do not
+  broaden retry behavior without explicit evidence that it is safe.
 - Keep ambiguous-JSON rejection in `internal/strictjson`, JSON-RPC envelope rules in `internal/jsonrpc`, stdout selection
   and encoding in `internal/output`, and cross-provider consistency checks in `internal/evidence`. Do not duplicate these
   checks in command handlers.

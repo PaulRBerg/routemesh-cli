@@ -2,7 +2,7 @@
 
 `routemesh` is a thin, deterministic client for the [RouteMesh](https://routeme.sh) JSON-RPC service. Its primary
 interface is bounded JSON suitable for shell pipelines and coding agents: strict raw inputs, runtime schemas, explicit
-side-effect gating, NDJSON streaming, machine-readable diagnostics, and stable exit codes.
+side-effect gating, NDJSON output, machine-readable diagnostics, and stable exit codes.
 
 It does not interpret transactions, discover history through explorers, sign payloads, or claim that one successful
 route proves general provider or archive health.
@@ -98,6 +98,7 @@ Use schema discovery instead of scraping help text:
 routemesh schema
 routemesh schema rpc
 routemesh schema logs
+routemesh schema subscribe
 routemesh schema auth status
 routemesh schema api
 ```
@@ -115,17 +116,46 @@ publish.
 ```sh
 routemesh health
 routemesh chains
+routemesh chains --transport ws
 routemesh ping 1
 ```
 
 `health` checks RouteMesh's public service readiness. `chains` validates and numerically sorts the live HTTP RPC
-catalog from `GET /chains/rpc`, replacing the deprecated `GET /chains` endpoint.
+catalog from `GET /chains/rpc`. `chains --transport ws` selects the separate WebSocket catalog at `GET /chains/ws`.
+The default is `--transport rpc`; neither command uses the deprecated `GET /chains` endpoint.
 `ping` batches exactly `eth_chainId` and `eth_blockNumber`, verifies the returned chain ID, and reports only those two
 routes and their latency. Request commands require canonical positive decimal chain IDs; aliases and default chains are
 not accepted.
 
-The CLI uses HTTP RPC. For WebSocket clients, RouteMesh exposes a separate supported-chain catalog at `GET /chains/ws`
-and accepts the existing RPC URL with `https://` replaced by `wss://`.
+## WebSocket subscriptions
+
+Use `subscribe` to wait for live activity without polling. It uses the same credential source as HTTP RPC, with
+`wss://` replacing `https://` in the RouteMesh URL.
+
+```sh
+routemesh subscribe 1 newHeads --dry-run
+routemesh --timeout 60s subscribe 1 newHeads --count 2
+routemesh --output ndjson subscribe 1 newPendingTransactions --count 5
+routemesh --timeout 60s subscribe 1 logs --json '{
+  "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+}'
+```
+
+Check `chains --transport ws` for chain coverage. Subscription-type availability is provider-dependent; RouteMesh
+publishes the current types in its [WebSocket pricing catalog](https://api.routeme.sh/pricing/ws).
+
+`--count` defaults to 1 and accepts 1–1000 notifications. The global `--timeout` defaults to 30 seconds. Output is
+buffered until the requested count is reached: JSON is an array of `eth_subscription` envelopes, and NDJSON emits one
+envelope per line. `--select` and `--max-output-bytes` apply as usual. A timeout, disconnect, malformed message, or
+output-limit failure emits no partial stdout. The connection closes when collection finishes; the CLI never reconnects
+or retries a subscription. Received JSON is limited to 32 MiB in total, including the subscription acknowledgement.
+
+Log filters accept only `address` and `topics`; `--json -` reads the filter from stdin. The CLI validates notification
+envelopes, subscription IDs, block/header fields, transaction hashes, and log fields against the requested filter.
+Live notifications are observations, not proof of finality or historical completeness. Reorg notifications, including
+logs with `removed: true`, are preserved in arrival order and count toward `--count`. Use `logs` with an explicit range
+or `receipt` to verify subsequent canonical evidence. A fresh subscription does not recover events missed while
+disconnected.
 
 ## JSON-RPC
 
@@ -209,7 +239,8 @@ normalization, hardening, write classification, and plan validation without Rout
 Destinations always end in `/<redacted>`.
 
 Stderr consists of NDJSON events. RPC attempt events contain the redacted destination, HTTP status, attempt number, and
-every `X-Batch-Id` returned by RouteMesh. Error events contain a stable code, message, and exit code. The macOS Keychain
+every `X-Batch-Id` returned by RouteMesh. WebSocket handshake events include the redacted destination, HTTP status,
+and `X-WebSocket-Session-ID` when available. Error events contain a stable code, message, and exit code. The macOS Keychain
 prompt is the only interactive exception.
 
 | Exit | Meaning |

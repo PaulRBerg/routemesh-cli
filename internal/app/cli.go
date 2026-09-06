@@ -29,15 +29,16 @@ type CLI struct {
 	MaxOutputBytes int64            `name:"max-output-bytes" default:"1048576" env:"ROUTEMESH_MAX_OUTPUT_BYTES" help:"Maximum encoded stdout bytes."`
 	Timeout        time.Duration    `name:"timeout" default:"30s" help:"Overall command timeout."`
 
-	Init    InitCmd    `cmd:"" help:"Store and validate a RouteMesh API key in macOS Keychain."`
-	Schema  SchemaCmd  `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
-	Auth    AuthCmd    `cmd:"" help:"Inspect or clear stored credentials."`
-	Health  HealthCmd  `cmd:"" help:"Check public RouteMesh service readiness."`
-	Chains  ChainsCmd  `cmd:"" help:"List the live RouteMesh HTTP RPC chain catalog."`
-	Ping    PingCmd    `cmd:"" help:"Verify eth_chainId and eth_blockNumber for an EVM chain."`
-	RPC     RPCCmd     `cmd:"" name:"rpc" help:"Send strict JSON-RPC requests."`
-	Logs    LogsCmd    `cmd:"" help:"Collect canonical eth_getLogs evidence."`
-	Receipt ReceiptCmd `cmd:"" help:"Collect and cross-check transaction receipt evidence."`
+	Init      InitCmd      `cmd:"" help:"Store and validate a RouteMesh API key in macOS Keychain."`
+	Schema    SchemaCmd    `cmd:"" help:"Inspect bundled CLI schemas or RouteMesh OpenAPI."`
+	Auth      AuthCmd      `cmd:"" help:"Inspect or clear stored credentials."`
+	Health    HealthCmd    `cmd:"" help:"Check public RouteMesh service readiness."`
+	Chains    ChainsCmd    `cmd:"" help:"List live RouteMesh chains for HTTP RPC or WebSockets."`
+	Subscribe SubscribeCmd `cmd:"" help:"Collect a bounded set of live WebSocket notifications."`
+	Ping      PingCmd      `cmd:"" help:"Verify eth_chainId and eth_blockNumber for an EVM chain."`
+	RPC       RPCCmd       `cmd:"" name:"rpc" help:"Send strict JSON-RPC requests."`
+	Logs      LogsCmd      `cmd:"" help:"Collect canonical eth_getLogs evidence."`
+	Receipt   ReceiptCmd   `cmd:"" help:"Collect and cross-check transaction receipt evidence."`
 }
 
 type SchemaCmd struct {
@@ -61,7 +62,17 @@ type AuthClearCmd struct {
 }
 
 type HealthCmd struct{}
-type ChainsCmd struct{}
+type ChainsCmd struct {
+	Transport string `name:"transport" enum:"rpc,ws" default:"rpc" help:"Catalog transport: rpc (HTTP) or ws (WebSocket)."`
+}
+
+type SubscribeCmd struct {
+	ChainID      string `arg:"" name:"chain-id" help:"Canonical positive decimal chain ID."`
+	Subscription string `arg:"" enum:"newHeads,logs,newPendingTransactions" help:"Subscription type: newHeads, logs, or newPendingTransactions."`
+	JSON         string `name:"json" placeholder:"FILTER|-" help:"Log subscription filter containing address and/or topics; use - for stdin."`
+	Count        int    `name:"count" default:"1" help:"Number of notifications to collect before emitting output (1-1000)."`
+	DryRun       bool   `name:"dry-run" help:"Validate and emit the subscription plan without credentials or network access."`
+}
 
 type PingCmd struct {
 	ChainID string `arg:"" name:"chain-id" help:"Canonical positive decimal chain ID."`
@@ -89,35 +100,37 @@ type ReceiptCmd struct {
 }
 
 type Dependencies struct {
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
-	Getenv     func(string) string
-	HTTPClient transport.Doer
-	Keychain   auth.Store
-	Sleep      transport.Sleep
-	Now        func() time.Time
-	Rand       transport.Rand
-	APIBase    string
-	RPCBase    string
-	OpenAPIURL string
+	Stdin         io.Reader
+	Stdout        io.Writer
+	Stderr        io.Writer
+	Getenv        func(string) string
+	HTTPClient    transport.Doer
+	WebSocketDial transport.WebSocketDial
+	Keychain      auth.Store
+	Sleep         transport.Sleep
+	Now           func() time.Time
+	Rand          transport.Rand
+	APIBase       string
+	RPCBase       string
+	OpenAPIURL    string
 }
 
 type Runtime struct {
-	ctx        context.Context
-	stdin      io.Reader
-	stdout     io.Writer
-	stderr     io.Writer
-	getenv     func(string) string
-	httpClient transport.Doer
-	keychain   auth.Store
-	sleep      transport.Sleep
-	now        func() time.Time
-	rand       transport.Rand
-	apiBase    string
-	rpcBase    string
-	openAPIURL string
-	output     output.Config
+	ctx           context.Context
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	getenv        func(string) string
+	httpClient    transport.Doer
+	webSocketDial transport.WebSocketDial
+	keychain      auth.Store
+	sleep         transport.Sleep
+	now           func() time.Time
+	rand          transport.Rand
+	apiBase       string
+	rpcBase       string
+	openAPIURL    string
+	output        output.Config
 }
 
 func Execute(ctx context.Context, args []string, dependencies Dependencies) int {
@@ -167,20 +180,21 @@ func Execute(ctx context.Context, args []string, dependencies Dependencies) int 
 	commandCtx, cancel := context.WithTimeout(ctx, cli.Timeout)
 	defer cancel()
 	runtime := &Runtime{
-		ctx:        commandCtx,
-		stdin:      dependencies.Stdin,
-		stdout:     dependencies.Stdout,
-		stderr:     dependencies.Stderr,
-		getenv:     dependencies.Getenv,
-		httpClient: dependencies.HTTPClient,
-		keychain:   dependencies.Keychain,
-		sleep:      dependencies.Sleep,
-		now:        dependencies.Now,
-		rand:       dependencies.Rand,
-		apiBase:    dependencies.APIBase,
-		rpcBase:    dependencies.RPCBase,
-		openAPIURL: dependencies.OpenAPIURL,
-		output:     outputConfig,
+		ctx:           commandCtx,
+		stdin:         dependencies.Stdin,
+		stdout:        dependencies.Stdout,
+		stderr:        dependencies.Stderr,
+		getenv:        dependencies.Getenv,
+		httpClient:    dependencies.HTTPClient,
+		webSocketDial: dependencies.WebSocketDial,
+		keychain:      dependencies.Keychain,
+		sleep:         dependencies.Sleep,
+		now:           dependencies.Now,
+		rand:          dependencies.Rand,
+		apiBase:       dependencies.APIBase,
+		rpcBase:       dependencies.RPCBase,
+		openAPIURL:    dependencies.OpenAPIURL,
+		output:        outputConfig,
 	}
 	if err := parsed.Run(runtime); err != nil {
 		typed := failure.Normalize(err)
@@ -244,15 +258,16 @@ func (r *Runtime) authenticatedClient(key string) *transport.Client {
 
 func (r *Runtime) client(key string) *transport.Client {
 	return transport.New(transport.Options{
-		HTTPClient: r.httpClient,
-		APIBase:    r.apiBase,
-		RPCBase:    r.rpcBase,
-		OpenAPIURL: r.openAPIURL,
-		APIKey:     key,
-		Diagnostic: r.diagnostic,
-		Sleep:      r.sleep,
-		Now:        r.now,
-		Rand:       r.rand,
+		HTTPClient:    r.httpClient,
+		WebSocketDial: r.webSocketDial,
+		APIBase:       r.apiBase,
+		RPCBase:       r.rpcBase,
+		OpenAPIURL:    r.openAPIURL,
+		APIKey:        key,
+		Diagnostic:    r.diagnostic,
+		Sleep:         r.sleep,
+		Now:           r.now,
+		Rand:          r.rand,
 	})
 }
 

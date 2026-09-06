@@ -173,6 +173,20 @@ func (p logPosition) before(other logPosition) bool {
 }
 
 func validateLog(value any, chunk Chunk) (map[string]any, logPosition, error) {
+	object, position, err := validateLogFields(value)
+	if err != nil {
+		return nil, logPosition{}, err
+	}
+	if position.block < chunk.From || position.block > chunk.To {
+		return nil, logPosition{}, failure.Evidencef("contradictory_log", "log block number is outside its requested chunk")
+	}
+	if object["removed"].(bool) {
+		return nil, logPosition{}, failure.Evidencef("contradictory_log", "log entry is missing a non-removed state")
+	}
+	return object, position, nil
+}
+
+func validateLogFields(value any) (map[string]any, logPosition, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
 		return nil, logPosition{}, failure.Evidencef("invalid_log", "log entry is not an object")
@@ -196,8 +210,8 @@ func validateLog(value any, chunk Chunk) (map[string]any, logPosition, error) {
 		return nil, logPosition{}, failure.Evidencef("invalid_log", "log entry has invalid data")
 	}
 	block, err := quantityField(object, "blockNumber")
-	if err != nil || block < chunk.From || block > chunk.To {
-		return nil, logPosition{}, failure.Evidencef("contradictory_log", "log block number is outside its requested chunk")
+	if err != nil {
+		return nil, logPosition{}, err
 	}
 	txIndex, err := quantityField(object, "transactionIndex")
 	if err != nil {
@@ -215,9 +229,8 @@ func validateLog(value any, chunk Chunk) (map[string]any, logPosition, error) {
 	if !ok || evm.ValidateHash(blockHash) != nil {
 		return nil, logPosition{}, failure.Evidencef("invalid_log", "log entry has an invalid block hash")
 	}
-	removed, ok := object["removed"].(bool)
-	if !ok || removed {
-		return nil, logPosition{}, failure.Evidencef("contradictory_log", "log entry is missing a non-removed state")
+	if _, ok := object["removed"].(bool); !ok {
+		return nil, logPosition{}, failure.Evidencef("invalid_log", "log entry is missing its removed state")
 	}
 	return object, logPosition{block: block, tx: txIndex, index: logIndex}, nil
 }

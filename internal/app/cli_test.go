@@ -127,7 +127,7 @@ func TestSchemaIndexAndDetail(t *testing.T) {
 	index := execute(t, []string{"schema"}, Dependencies{})
 	assert.Equal(t, 0, index.code)
 	assert.Empty(t, index.stderr)
-	assert.Len(t, decodeObject(t, index.stdout)["commands"], 11)
+	assert.Len(t, decodeObject(t, index.stdout)["commands"], 12)
 
 	detail := execute(t, []string{"schema", "auth", "status"}, Dependencies{})
 	assert.Equal(t, 0, detail.code)

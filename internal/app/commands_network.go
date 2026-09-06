@@ -45,8 +45,8 @@ func (*HealthCmd) Run(runtime *Runtime) error {
 	return nil
 }
 
-func (*ChainsCmd) Run(runtime *Runtime) error {
-	value, _, err := runtime.publicClient().GetAPI(runtime.ctx, "/chains/rpc")
+func (command *ChainsCmd) Run(runtime *Runtime) error {
+	value, _, err := runtime.publicClient().GetAPI(runtime.ctx, "/chains/"+command.Transport)
 	if err != nil {
 		return err
 	}

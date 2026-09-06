@@ -1,4 +1,4 @@
-// Package transport implements the RouteMesh HTTP boundary and retry policy.
+// Package transport implements the RouteMesh HTTP and WebSocket boundaries.
 package transport
 
 import (
@@ -43,27 +43,29 @@ type Sleep func(context.Context, time.Duration) error
 type Rand func() float64
 
 type Options struct {
-	HTTPClient Doer
-	APIBase    string
-	RPCBase    string
-	OpenAPIURL string
-	APIKey     string
-	Diagnostic Diagnostic
-	Sleep      Sleep
-	Now        func() time.Time
-	Rand       Rand
+	HTTPClient    Doer
+	WebSocketDial WebSocketDial
+	APIBase       string
+	RPCBase       string
+	OpenAPIURL    string
+	APIKey        string
+	Diagnostic    Diagnostic
+	Sleep         Sleep
+	Now           func() time.Time
+	Rand          Rand
 }
 
 type Client struct {
-	httpClient Doer
-	apiBase    string
-	rpcBase    string
-	openAPIURL string
-	apiKey     string
-	diagnostic Diagnostic
-	sleep      Sleep
-	now        func() time.Time
-	rand       Rand
+	httpClient    Doer
+	webSocketDial WebSocketDial
+	apiBase       string
+	rpcBase       string
+	openAPIURL    string
+	apiKey        string
+	diagnostic    Diagnostic
+	sleep         Sleep
+	now           func() time.Time
+	rand          Rand
 }
 
 type RPCResult struct {
@@ -101,20 +103,21 @@ func New(options Options) *Client {
 		random = rand.Float64
 	}
 	return &Client{
-		httpClient: httpClient,
-		apiBase:    strings.TrimRight(apiBase, "/"),
-		rpcBase:    strings.TrimRight(rpcBase, "/"),
-		openAPIURL: openAPIURL,
-		apiKey:     options.APIKey,
-		diagnostic: diagnostic,
-		sleep:      sleep,
-		now:        now,
-		rand:       random,
+		httpClient:    httpClient,
+		webSocketDial: options.WebSocketDial,
+		apiBase:       strings.TrimRight(apiBase, "/"),
+		rpcBase:       strings.TrimRight(rpcBase, "/"),
+		openAPIURL:    openAPIURL,
+		apiKey:        options.APIKey,
+		diagnostic:    diagnostic,
+		sleep:         sleep,
+		now:           now,
+		rand:          random,
 	}
 }
 
 func (c *Client) GetAPI(ctx context.Context, endpoint string) (any, time.Duration, error) {
-	if endpoint != "/health" && endpoint != "/chains/rpc" {
+	if endpoint != "/health" && endpoint != "/chains/rpc" && endpoint != "/chains/ws" {
 		return nil, 0, failure.Validationf("invalid_endpoint", "unsupported public API endpoint %q", endpoint)
 	}
 	return c.getJSON(ctx, c.apiBase+endpoint)
