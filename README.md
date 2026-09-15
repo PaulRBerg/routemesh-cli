@@ -239,9 +239,9 @@ normalization, hardening, write classification, and plan validation without Rout
 Destinations always end in `/<redacted>`.
 
 Stderr consists of NDJSON events. RPC attempt events contain the redacted destination, HTTP status, attempt number, and
-every `X-Batch-Id` returned by RouteMesh. WebSocket handshake events include the redacted destination, HTTP status,
-and `X-WebSocket-Session-ID` when available. Error events contain a stable code, message, and exit code. The macOS Keychain
-prompt is the only interactive exception.
+each correlation ID from RouteMesh's `X-Batch-Id` and comma-separated `X-Batch-Ids` headers. WebSocket handshake events include
+the redacted destination, HTTP status, and `X-WebSocket-Session-ID` when available. Error events contain a stable code,
+message, and exit code. The macOS Keychain prompt is the only interactive exception.
 
 | Exit | Meaning |
 | ---: | --- |

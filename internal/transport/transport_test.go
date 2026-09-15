@@ -103,6 +103,47 @@ func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 	assert.Len(t, events, 2)
 }
 
+func TestDoRPCReportsAllBatchCorrelationIDs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		headers http.Header
+		ids     []any
+	}{
+		{name: "absent", ids: []any{nil}},
+		{name: "singular", headers: http.Header{"X-Batch-Id": {"single"}}, ids: []any{"single"}},
+		{name: "plural", headers: http.Header{"X-Batch-Ids": {"first, second", "third"}}, ids: []any{"first", "second", "third"}},
+		{name: "both", headers: http.Header{"X-Batch-Id": {"request"}, "X-Batch-Ids": {"first, second"}}, ids: []any{"request", "first", "second"}},
+		{name: "empty", headers: http.Header{"X-Batch-Ids": {" , "}}, ids: []any{nil}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var ids []any
+			client := New(Options{
+				APIKey: "secret",
+				HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+					res := response(http.StatusOK, `[{"jsonrpc":"2.0","id":1,"result":"0x89"},{"jsonrpc":"2.0","id":2,"result":"0x1"}]`, nil)
+					res.Header = tc.headers
+					return res, nil
+				}),
+				Diagnostic: func(event any) {
+					fields, ok := event.(map[string]any)
+					require.True(t, ok)
+					ids = append(ids, fields["batch_id"])
+				},
+			})
+			envelope, err := jsonrpc.ParseRaw([]byte(`[{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]},{"jsonrpc":"2.0","id":2,"method":"eth_blockNumber","params":[]}]`))
+			require.NoError(t, err)
+			_, err = client.DoRPC(context.Background(), "137", envelope)
+			require.NoError(t, err)
+			assert.Equal(t, tc.ids, ids)
+		})
+	}
+}
+
 func TestDoRPCRetriesTransientHTTPWithRetryAfter(t *testing.T) {
 	t.Parallel()
 

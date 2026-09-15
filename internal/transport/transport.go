@@ -221,10 +221,18 @@ func (c *Client) rpcAttempt(
 	if err != nil {
 		return RPCResult{}, "", false, transportFailure(ctx, err)
 	}
-	for _, batchID := range response.Header.Values("X-Batch-Id") {
-		c.emitAttempt(attempt, redacted, batchID, response.StatusCode)
+	reportedBatchID := false
+	for _, header := range []string{"X-Batch-Id", "X-Batch-Ids"} {
+		for _, value := range response.Header.Values(header) {
+			for batchID := range strings.SplitSeq(value, ",") {
+				if batchID = strings.TrimSpace(batchID); batchID != "" {
+					c.emitAttempt(attempt, redacted, batchID, response.StatusCode)
+					reportedBatchID = true
+				}
+			}
+		}
 	}
-	if len(response.Header.Values("X-Batch-Id")) == 0 {
+	if !reportedBatchID {
 		c.emitAttempt(attempt, redacted, nil, response.StatusCode)
 	}
 	responseBody, readErr := readResponse(response)
