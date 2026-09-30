@@ -88,9 +88,10 @@ type RPCCmd struct {
 }
 
 type LogsCmd struct {
-	ChainID string `arg:"" name:"chain-id" help:"Canonical positive decimal chain ID."`
-	JSON    string `name:"json" required:"" placeholder:"FILTER|-" help:"Complete eth_getLogs filter; use - for stdin."`
-	DryRun  bool   `name:"dry-run" help:"Validate and emit the deterministic chunk plan without network access."`
+	ChainID   string `arg:"" name:"chain-id" help:"Canonical positive decimal chain ID."`
+	JSON      string `name:"json" required:"" placeholder:"FILTER|-" help:"Complete eth_getLogs filter; use - for stdin."`
+	ChunkSize uint64 `name:"chunk-size" default:"10000" help:"Maximum blocks per eth_getLogs request (1-10000); lower it for chains with tighter provider limits."`
+	DryRun    bool   `name:"dry-run" help:"Validate and emit the deterministic chunk plan without network access."`
 }
 
 type ReceiptCmd struct {

@@ -26,6 +26,20 @@ func TestParseLogFilterAndChunkBoundaries(t *testing.T) {
 	assert.Equal(t, Chunk{From: 20_001, To: 20_001}, chunks[2])
 }
 
+func TestLogFilterCustomChunkSize(t *testing.T) {
+	t.Parallel()
+
+	filter, err := ParseLogFilter([]byte(`{"fromBlock":"0x1","toBlock":"0x1389"}`))
+	require.NoError(t, err)
+	filter.ChunkSize = 2_000
+	chunks, err := filter.Chunks(filter.To)
+	require.NoError(t, err)
+	assert.Equal(t, []Chunk{{From: 1, To: 2_000}, {From: 2_001, To: 4_000}, {From: 4_001, To: 5_001}}, chunks)
+	count, err := filter.ChunkCount(filter.To)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(3), count)
+}
+
 func TestParseLogFilterLatestDefersChunks(t *testing.T) {
 	t.Parallel()
 

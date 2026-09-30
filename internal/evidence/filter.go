@@ -8,13 +8,15 @@ import (
 	"github.com/paulrberg/routemesh-cli/internal/strictjson"
 )
 
-const LogChunkSize uint64 = 10_000
+// MaxLogChunkSize is RouteMesh's documented eth_getLogs block-range limit and the default chunk size.
+const MaxLogChunkSize uint64 = 10_000
 
 type LogFilter struct {
-	From     uint64
-	To       uint64
-	ToLatest bool
-	base     map[string]any
+	From      uint64
+	To        uint64
+	ToLatest  bool
+	ChunkSize uint64
+	base      map[string]any
 }
 
 type Chunk struct {
@@ -56,7 +58,7 @@ func ParseLogFilter(data []byte) (LogFilter, error) {
 	if !ok {
 		return LogFilter{}, fmt.Errorf("toBlock is required and must be a numeric block quantity or latest")
 	}
-	filter := LogFilter{From: from, base: make(map[string]any, len(object))}
+	filter := LogFilter{From: from, ChunkSize: MaxLogChunkSize, base: make(map[string]any, len(object))}
 	if toRaw == "latest" {
 		filter.ToLatest = true
 	} else {
@@ -111,8 +113,8 @@ func (f LogFilter) Chunks(upper uint64) ([]Chunk, error) {
 	chunks := make([]Chunk, 0, count)
 	for start := f.From; ; {
 		end := upper
-		if upper-start >= LogChunkSize {
-			end = start + LogChunkSize - 1
+		if upper-start >= f.ChunkSize {
+			end = start + f.ChunkSize - 1
 		}
 		chunks = append(chunks, Chunk{From: start, To: end})
 		if end == upper {
@@ -127,7 +129,7 @@ func (f LogFilter) ChunkCount(upper uint64) (uint64, error) {
 	if upper < f.From {
 		return 0, fmt.Errorf("resolved upper block is below fromBlock")
 	}
-	return ((upper - f.From) / LogChunkSize) + 1, nil
+	return ((upper - f.From) / f.ChunkSize) + 1, nil
 }
 
 func validateAddresses(value any) error {

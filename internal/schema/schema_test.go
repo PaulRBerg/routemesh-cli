@@ -64,6 +64,10 @@ func TestValidateDefinition(t *testing.T) {
 		"chain_id": "1", "block_number": "1", "block_number_hex": "0x1", "latency_ms": int64(1),
 		"routes": []string{"eth_chainId", "eth_blockNumber"},
 	}))
+	logsInput := map[string]any{"chain_id": "1", "filter": map[string]any{}, "chunk_size": 2000, "dry_run": true}
+	require.NoError(t, ValidateDefinition("logs", "input", logsInput))
+	logsInput["chunk_size"] = 10001
+	require.Error(t, ValidateDefinition("logs", "input", logsInput))
 }
 
 func TestWebSocketContracts(t *testing.T) {

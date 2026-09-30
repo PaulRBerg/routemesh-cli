@@ -14,6 +14,9 @@ func (command *LogsCmd) Run(runtime *Runtime) error {
 	if _, err := evm.ParseChainID(command.ChainID); err != nil {
 		return failure.Wrap(failure.Validation, "invalid_chain_id", err.Error(), err)
 	}
+	if command.ChunkSize < 1 || command.ChunkSize > evidence.MaxLogChunkSize {
+		return failure.Validationf("invalid_chunk_size", "chunk size must be between 1 and %d", evidence.MaxLogChunkSize)
+	}
 	data, err := rawInput(runtime, command.JSON)
 	if err != nil {
 		return err
@@ -22,6 +25,7 @@ func (command *LogsCmd) Run(runtime *Runtime) error {
 	if err != nil {
 		return failure.Wrap(failure.Validation, "invalid_log_filter", err.Error(), err)
 	}
+	filter.ChunkSize = command.ChunkSize
 	if command.DryRun {
 		var (
 			chunks            any
@@ -58,7 +62,7 @@ func (command *LogsCmd) Run(runtime *Runtime) error {
 			"chain_id":           command.ChainID,
 			"destination":        transport.RedactedDestination(runtime.rpcBase, command.ChainID),
 			"filter":             filter.Canonical(),
-			"chunk_size":         evidence.LogChunkSize,
+			"chunk_size":         filter.ChunkSize,
 			"chunks":             chunks,
 			"runtime_resolution": runtimeResolution,
 		}})

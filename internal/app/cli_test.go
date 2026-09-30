@@ -414,6 +414,20 @@ func TestLogsAndReceiptDryRunsAreNetworkFree(t *testing.T) {
 	assert.Equal(t, 0, doer.calls)
 	assert.Nil(t, decodeObject(t, logs.stdout)["chunks"])
 
+	custom := execute(t, []string{"logs", "1", "--json", `{"fromBlock":"0x1","toBlock":"0xfa0"}`, "--chunk-size", "2000", "--dry-run"}, Dependencies{HTTPClient: doer})
+	assert.Equal(t, 0, custom.code)
+	plan := decodeObject(t, custom.stdout)
+	assert.EqualValues(t, 2000, plan["chunk_size"])
+	assert.Equal(t, []any{
+		map[string]any{"from_block": "0x1", "to_block": "0x7d0"},
+		map[string]any{"from_block": "0x7d1", "to_block": "0xfa0"},
+	}, plan["chunks"])
+	for _, size := range []string{"0", "10001"} {
+		invalid := execute(t, []string{"logs", "1", "--json", `{"fromBlock":"0x1","toBlock":"0x1"}`, "--chunk-size", size, "--dry-run"}, Dependencies{HTTPClient: doer})
+		assert.Equal(t, 2, invalid.code)
+		assert.Empty(t, invalid.stdout)
+	}
+
 	hash := "0x" + strings.Repeat("a", 64)
 	receipt := execute(t, []string{"receipt", "1", hash, "--dry-run"}, Dependencies{HTTPClient: doer})
 	assert.Equal(t, 0, receipt.code)

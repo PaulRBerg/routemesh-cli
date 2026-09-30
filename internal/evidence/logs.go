@@ -58,8 +58,8 @@ func CollectLogs(ctx context.Context, caller RPCCaller, chainID string, filter L
 	chunkCount := 0
 	for start := filter.From; ; {
 		end := upper
-		if upper-start >= LogChunkSize {
-			end = start + LogChunkSize - 1
+		if upper-start >= filter.ChunkSize {
+			end = start + filter.ChunkSize - 1
 		}
 		chunk := Chunk{From: start, To: end}
 		chunkCount++

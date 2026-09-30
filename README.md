@@ -215,6 +215,8 @@ printf '%s\n' '{"fromBlock":"0x1200000","toBlock":"0x1202710"}' |
 `logs` accepts only standard range-filter fields, requires numeric `fromBlock`, permits numeric or `latest` `toBlock`,
 and rejects `blockHash` and unknown fields. It validates address/topic widths, resolves `latest` once, and splits the
 inclusive range into at most 10,000 blocks per `eth_getLogs` request, matching RouteMesh's documented request limit.
+Pass `--chunk-size N` (1–10,000) for chains whose upstream providers enforce a tighter range, such as
+`--chunk-size 2000` on IoTeX.
 
 The upper-bound block hash is fetched before and after all chunks. No log—including an empty result—is emitted unless
 every chunk succeeds, entries validate and remain ordered, and the upper-bound hash is unchanged.

@@ -321,7 +321,7 @@
       }
     },
     "logs": {
-      "summary": "Collect canonical eth_getLogs evidence in deterministic 10,000-block chunks.",
+      "summary": "Collect canonical eth_getLogs evidence in deterministic block chunks (default and maximum 10,000).",
       "side_effect": "read_only",
       "input_modes": ["raw_json", "stdin"],
       "input": {
@@ -329,6 +329,7 @@
         "properties": {
           "chain_id": { "$ref": "#/$defs/chain_id" },
           "filter": { "type": "object" },
+          "chunk_size": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 10000 },
           "dry_run": { "type": "boolean" }
         },
         "required": ["chain_id", "filter", "dry_run"],
@@ -355,7 +356,7 @@
           "chain_id": { "$ref": "#/$defs/chain_id" },
           "destination": { "type": "string", "pattern": "/<redacted>$" },
           "filter": { "type": "object" },
-          "chunk_size": { "const": 10000 },
+          "chunk_size": { "type": "integer", "minimum": 1, "maximum": 10000 },
           "chunks": { "type": ["array", "null"] },
           "runtime_resolution": { "type": ["object", "null"] }
         },
