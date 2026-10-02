@@ -191,8 +191,11 @@ routemesh rpc 1 eth_sendRawTransaction \
 
 An allowed write is never retried. Read-only requests get at most three total attempts for RouteMesh's documented
 `-32003`, `-32603`, and `-32000` JSON-RPC errors, or for HTTP 429, 502, 503, and 504 responses that contain no usable
-JSON-RPC evidence. A batch is retried for JSON-RPC errors only when every item failed with a retryable code. Valid
-`Retry-After` delays are honored up to 30 seconds; otherwise retries use bounded exponential backoff with full jitter.
+JSON-RPC evidence. The documented `-32009` “All nodes failed” error, including a valid JSON-RPC error returned with
+HTTP 424, limits the request to two total attempts when it appears by attempt two. If it first appears on attempt
+three, that response is returned without another retry. A batch is retried for JSON-RPC errors only when every item
+failed with a retryable code. Valid `Retry-After` delays are honored up to 30 seconds; otherwise retries use bounded
+exponential backoff with full jitter.
 
 The complete final JSON-RPC response is emitted even when it contains an error; the process then exits `5`.
 

@@ -103,6 +103,247 @@ func TestDoRPCRetriesDocumentedReadOnlyErrorOnce(t *testing.T) {
 	assert.Len(t, events, 2)
 }
 
+func TestDoRPCRetriesAllNodesFailedOnce(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusOK, http.StatusFailedDependency} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			var slept []time.Duration
+			var events []any
+			client := New(Options{
+				APIKey: "secret",
+				HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					if calls == 1 {
+						return response(status, `{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`, nil), nil
+					}
+					return response(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"0x1"}`, nil), nil
+				}),
+				Sleep: func(_ context.Context, delay time.Duration) error {
+					slept = append(slept, delay)
+					return nil
+				},
+				Rand:       func() float64 { return 1 },
+				Diagnostic: func(event any) { events = append(events, event) },
+			})
+			result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+			require.NoError(t, err)
+			assert.Equal(t, 2, result.Attempts)
+			assert.Equal(t, 2, calls)
+			assert.Equal(t, []time.Duration{serverRetryBaseDelay}, slept)
+			assert.Len(t, events, 2)
+		})
+	}
+}
+
+func TestDoRPCStopsAtTwoAttemptsAfterAllNodesFailed(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	var events []any
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return response(http.StatusFailedDependency, `{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`, nil), nil
+		}),
+		Sleep:      func(context.Context, time.Duration) error { return nil },
+		Rand:       func() float64 { return 1 },
+		Diagnostic: func(event any) { events = append(events, event) },
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	require.NoError(t, err)
+	assert.True(t, result.HasError)
+	assert.Equal(t, []int64{-32009}, result.ErrorCodes)
+	assert.Equal(t, http.StatusFailedDependency, result.HTTPStatus)
+	assert.Equal(t, 2, result.Attempts)
+	assert.Equal(t, 2, calls)
+	assert.Len(t, events, 2)
+	for index, event := range events {
+		fields, ok := event.(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, index+1, fields["attempt"])
+	}
+}
+
+func TestDoRPCAllNodesFailedCapsMixedRetrySequences(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		first     string
+		last      string
+		finalCode int64
+	}{
+		{
+			name:      "all nodes failed then another retryable error",
+			first:     `{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`,
+			last:      `{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"cooldown"}}`,
+			finalCode: -32003,
+		},
+		{
+			name:      "transient error then all nodes failed",
+			first:     `{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"cooldown"}}`,
+			last:      `{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`,
+			finalCode: -32009,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			bodies := []string{tc.first, tc.last}
+			calls := 0
+			client := New(Options{
+				APIKey: "secret",
+				HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+					body := bodies[calls]
+					calls++
+					return response(http.StatusOK, body, nil), nil
+				}),
+				Sleep: func(context.Context, time.Duration) error { return nil },
+				Rand:  func() float64 { return 1 },
+			})
+			result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+			require.NoError(t, err)
+			assert.True(t, result.HasError)
+			assert.Equal(t, []int64{tc.finalCode}, result.ErrorCodes)
+			assert.Equal(t, 2, result.Attempts)
+			assert.Equal(t, 2, calls)
+		})
+	}
+}
+
+func TestDoRPCAllNodesFailedOnThirdAttemptReturnsFinalResponse(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	bodies := []string{
+		`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal"}}`,
+		`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal"}}`,
+		`{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`,
+	}
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			body := bodies[calls]
+			calls++
+			return response(http.StatusOK, body, nil), nil
+		}),
+		Sleep: func(context.Context, time.Duration) error { return nil },
+		Rand:  func() float64 { return 1 },
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	require.NoError(t, err)
+	assert.Equal(t, []int64{-32009}, result.ErrorCodes)
+	assert.Equal(t, 3, result.Attempts)
+	assert.Equal(t, 3, calls)
+}
+
+func TestDoRPCRetriesAllErrorBatchWithAllNodesFailedOnce(t *testing.T) {
+	t.Parallel()
+
+	envelope, err := jsonrpc.Batch(
+		jsonrpc.Request{JSONRPC: "2.0", Method: "eth_chainId", Params: []any{}, ID: json.Number("1")},
+		jsonrpc.Request{JSONRPC: "2.0", Method: "eth_blockNumber", Params: []any{}, ID: json.Number("2")},
+	)
+	require.NoError(t, err)
+	bodies := []string{
+		`[{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}},{"jsonrpc":"2.0","id":2,"error":{"code":-32003,"message":"cooldown"}}]`,
+		`[{"jsonrpc":"2.0","id":1,"result":"0x1"},{"jsonrpc":"2.0","id":2,"result":"0x2"}]`,
+	}
+	calls := 0
+	var slept []time.Duration
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			body := bodies[calls]
+			calls++
+			status := http.StatusFailedDependency
+			if calls == 2 {
+				status = http.StatusOK
+			}
+			return response(status, body, nil), nil
+		}),
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			slept = append(slept, delay)
+			return nil
+		},
+		Rand: func() float64 { return 1 },
+	})
+	result, err := client.DoRPC(context.Background(), "1", envelope)
+	require.NoError(t, err)
+	assert.False(t, result.HasError)
+	assert.Equal(t, 2, result.Attempts)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, []time.Duration{rateLimitRetryBaseDelay}, slept)
+}
+
+func TestDoRPCDoesNotRetryPartialOrTerminalBatchesWithAllNodesFailed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "partial success",
+			body: `[{"jsonrpc":"2.0","id":1,"result":"0x1"},{"jsonrpc":"2.0","id":2,"error":{"code":-32009,"message":"all nodes failed"}}]`,
+		},
+		{
+			name: "terminal item",
+			body: `[{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}},{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"method not found"}}]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			envelope, err := jsonrpc.Batch(
+				jsonrpc.Request{JSONRPC: "2.0", Method: "eth_chainId", Params: []any{}, ID: json.Number("1")},
+				jsonrpc.Request{JSONRPC: "2.0", Method: "eth_blockNumber", Params: []any{}, ID: json.Number("2")},
+			)
+			require.NoError(t, err)
+			calls := 0
+			client := New(Options{
+				APIKey: "secret",
+				HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					return response(http.StatusOK, tc.body, nil), nil
+				}),
+			})
+			result, err := client.DoRPC(context.Background(), "1", envelope)
+			require.NoError(t, err)
+			assert.True(t, result.HasError)
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestDoRPCDoesNotRetryInvalidHTTP424Body(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return response(http.StatusFailedDependency, "upstream failure", nil), nil
+		}),
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_chainId"))
+	var typed *failure.Error
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, failure.Transport, typed.ExitCode)
+	assert.Equal(t, "http_error", typed.Kind)
+	assert.Contains(t, typed.Message, "HTTP 424")
+	assert.Equal(t, 1, result.Attempts)
+	assert.Equal(t, 1, calls)
+}
+
 func TestDoRPCReportsAllBatchCorrelationIDs(t *testing.T) {
 	t.Parallel()
 
@@ -307,6 +548,28 @@ func TestDoRPCNeverRetriesAllowedWrites(t *testing.T) {
 	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_sendRawTransaction"))
 	require.NoError(t, err)
 	assert.True(t, result.HasError)
+	assert.Equal(t, 1, calls)
+}
+
+func TestDoRPCNeverRetriesAllNodesFailedForWrites(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	client := New(Options{
+		APIKey: "secret",
+		HTTPClient: doerFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return response(http.StatusFailedDependency, `{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"all nodes failed"}}`, nil), nil
+		}),
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("write request attempted to sleep for a retry")
+			return nil
+		},
+	})
+	result, err := client.DoRPC(context.Background(), "1", generated(t, "eth_sendRawTransaction"))
+	require.NoError(t, err)
+	assert.True(t, result.HasError)
+	assert.Equal(t, 1, result.Attempts)
 	assert.Equal(t, 1, calls)
 }
 

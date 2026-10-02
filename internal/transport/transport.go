@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -177,13 +178,16 @@ func (c *Client) DoRPC(ctx context.Context, chainID string, envelope jsonrpc.Env
 		result, retryAfter, transientHTTP, attemptErr := c.rpcAttempt(ctx, destination, redacted, body, envelope, attempt)
 		result.Attempts = attempt
 		result.Latency = time.Since(started)
+		if !envelope.HasWrite() && slices.Contains(result.ErrorCodes, int64(-32009)) && maxAttempts > 2 {
+			maxAttempts = 2
+		}
 		if attemptErr != nil {
 			return result, attemptErr
 		}
-		if transientHTTP && attempt == maxAttempts {
+		if transientHTTP && attempt >= maxAttempts {
 			return result, invalidRPCResponseFailure(result.HTTPStatus)
 		}
-		if attempt == maxAttempts {
+		if attempt >= maxAttempts {
 			return result, nil
 		}
 		delay, retry := time.Duration(0), false
@@ -348,7 +352,7 @@ func retryDelay(codes []int64, hasError bool, retryAfter string, now time.Time, 
 			if candidate > delay {
 				delay = candidate
 			}
-		case -32603, -32000:
+		case -32603, -32000, -32009:
 			if serverRetryBaseDelay > delay {
 				delay = serverRetryBaseDelay
 			}
